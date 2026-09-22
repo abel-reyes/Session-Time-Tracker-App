@@ -198,7 +198,7 @@ Session Time Tracker utilizes a unified full-stack architecture pairing a fast R
 
 1. Clone the repository to your local environment:
    ```bash
-   git clone https://github.com/your-username/session-time-tracker.git
+   git clone https://github.com/abel-reyes/session-time-tracker.git
    cd session-time-tracker
    ```
 
