@@ -1,0 +1,34 @@
+{
+  "short_name": "Time Tracker",
+  "name": "Session Time Tracker",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192 512x512 any",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0f172a",
+  "theme_color": "#059669",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "shortcuts": [
+    {
+      "name": "Clock In",
+      "short_name": "Clock In",
+      "description": "Clock In to active session",
+      "url": "/?action=punch-in",
+      "icons": [{ "src": "/icon.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "Clock Out",
+      "short_name": "Clock Out",
+      "description": "Clock Out of active session",
+      "url": "/?action=punch-out",
+      "icons": [{ "src": "/icon.svg", "sizes": "192x192" }]
+    }
+  ]
+}

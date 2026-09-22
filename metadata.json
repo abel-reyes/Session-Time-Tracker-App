@@ -1,0 +1,8 @@
+{
+  "name": "Session Time Tracker",
+  "description": "Session timestamp tracker with project management, weekly averages per month and quarter, indefinite session punches, blank slate gifting, and cross-device sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
