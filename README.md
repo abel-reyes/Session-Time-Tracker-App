@@ -1,5 +1,7 @@
 # Session Time Tracker ⏱️
 
+🚀 **[View Live Demo](https://sessiontime-tracker.ai.studio/)**
+
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue.svg?logo=typescript)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19.0-61dafb.svg?logo=react)](https://react.dev/)
 [![Vite](https://img.shields.io/badge/Vite-6.2-646cff.svg?logo=vite)](https://vitejs.dev/)
