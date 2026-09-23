@@ -107,7 +107,7 @@ Session Time Tracker utilizes a unified full-stack architecture pairing a fast R
 │   └──────────────────────┬──────────────────────────────┘   │
 │                          │                                  │
 │   ┌──────────────────────▼──────────────────────────────┐   │
-│   │ File-Based Durable Persistence (`data/*.json`)       │   │
+│   │ File-Based Durable Persistence (`data/*.json`)      │   │
 │   └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
