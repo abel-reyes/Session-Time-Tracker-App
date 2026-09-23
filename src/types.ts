@@ -14,6 +14,13 @@ export interface Project {
 export interface PunchPair {
   inTime?: string; // "HH:mm:ss" or "HH:mm"
   outTime?: string; // "HH:mm:ss" or "HH:mm"
+  inDate?: string; // "YYYY-MM-DD"
+  outDate?: string; // "YYYY-MM-DD"
+  sessionId?: string; // Unique ID linking multi-day / cross-midnight segments
+  isMultiDaySegment?: boolean;
+  segmentIndex?: number;
+  totalSegments?: number;
+  totalSessionSeconds?: number;
   projectId?: string;
   projectName?: string;
   note?: string; // Objectives accomplished or session notes

@@ -55,11 +55,172 @@ export function parseTimeToSeconds(val?: string | null): number {
   return h * 3600 + m * 60 + s;
 }
 
-export function getDurationInSeconds(inVal?: string | null, outVal?: string | null): number {
+export function getDurationInSeconds(
+  inVal?: string | null,
+  outVal?: string | null,
+  inDate?: string | null,
+  outDate?: string | null
+): number {
   if (!inVal || !outVal) return 0;
+
+  // If explicit dates are provided and differ, compute accurate multi-day difference
+  if (inDate && outDate) {
+    const inFull = inVal.length === 5 ? `${inVal}:00` : inVal;
+    const outFull = outVal.length === 5 ? `${outVal}:00` : outVal;
+    const start = new Date(`${inDate}T${inFull}`);
+    const end = new Date(`${outDate}T${outFull}`);
+    if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+      const diffSec = Math.floor((end.getTime() - start.getTime()) / 1000);
+      return Math.max(0, diffSec);
+    }
+  }
+
   const inSec = parseTimeToSeconds(inVal);
   const outSec = parseTimeToSeconds(outVal);
+
+  // If outSec is less than inSec and no dates were passed, it crossed midnight (+24h)
+  if (outSec < inSec) {
+    return (outSec + 86400) - inSec;
+  }
+
   return Math.max(0, outSec - inSec);
+}
+
+/**
+ * Calculates live elapsed seconds for an active session, even if it started days ago.
+ */
+export function getActiveElapsedSeconds(
+  inDateStr?: string | null,
+  inTimeStr?: string | null,
+  now: Date = new Date()
+): number {
+  if (!inTimeStr) return 0;
+  const inDate = inDateStr || formatDateToYYYYMMDD(now);
+  const inFull = inTimeStr.length === 5 ? `${inTimeStr}:00` : inTimeStr;
+  const start = new Date(`${inDate}T${inFull}`);
+  if (isNaN(start.getTime())) return 0;
+  const diffMs = now.getTime() - start.getTime();
+  return Math.max(0, Math.floor(diffMs / 1000));
+}
+
+export interface MultiDaySegment {
+  date: string;
+  punch: PunchPair;
+  segmentDuration: number;
+}
+
+/**
+ * Splits a continuous multi-day work session across each individual calendar day
+ * to maintain perfectly valid 24-hour daily timesheet buckets and accurate charts.
+ */
+export function splitMultiDaySession(
+  startDate: string,
+  startTime: string,
+  endDate: string,
+  endTime: string,
+  projectId?: string,
+  projectName?: string,
+  note?: string
+): MultiDaySegment[] {
+  const cleanStartTime = startTime.length === 5 ? `${startTime}:00` : startTime;
+  const cleanEndTime = endTime.length === 5 ? `${endTime}:00` : endTime;
+
+  const startDt = new Date(`${startDate}T${cleanStartTime}`);
+  const endDt = new Date(`${endDate}T${cleanEndTime}`);
+  if (isNaN(startDt.getTime()) || !cleanStartTime || !cleanEndTime) {
+    return [];
+  }
+
+  // If end is before or equal to start, adjust overnight or fallback
+  let adjustedEndDt = endDt;
+  let adjustedEndDate = endDate;
+  if (adjustedEndDt <= startDt) {
+    if (startDate === endDate) {
+      // Overnight past midnight into next day
+      const nextDay = new Date(startDt);
+      nextDay.setDate(nextDay.getDate() + 1);
+      adjustedEndDate = formatDateToYYYYMMDD(nextDay);
+      adjustedEndDt = new Date(`${adjustedEndDate}T${cleanEndTime}`);
+    } else {
+      return [];
+    }
+  }
+
+  const totalSessionSeconds = Math.max(0, Math.floor((adjustedEndDt.getTime() - startDt.getTime()) / 1000));
+  const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+  const segments: MultiDaySegment[] = [];
+
+  // Same day session
+  if (startDate === adjustedEndDate) {
+    segments.push({
+      date: startDate,
+      segmentDuration: totalSessionSeconds,
+      punch: {
+        inDate: startDate,
+        inTime: cleanStartTime,
+        outDate: adjustedEndDate,
+        outTime: cleanEndTime,
+        sessionId,
+        totalSessionSeconds,
+        projectId,
+        projectName,
+        note: note || undefined,
+      },
+    });
+    return segments;
+  }
+
+  // Cross-day / Multi-day session: step through each calendar day
+  const currDateObj = new Date(`${startDate}T00:00:00`);
+  const endDateObj = new Date(`${adjustedEndDate}T00:00:00`);
+
+  const dayStrings: string[] = [];
+  while (currDateObj <= endDateObj) {
+    dayStrings.push(formatDateToYYYYMMDD(currDateObj));
+    currDateObj.setDate(currDateObj.getDate() + 1);
+  }
+
+  const totalDays = dayStrings.length;
+
+  for (let i = 0; i < totalDays; i++) {
+    const dayStr = dayStrings[i];
+    const isFirst = i === 0;
+    const isLast = i === totalDays - 1;
+
+    const segIn = isFirst ? cleanStartTime : '00:00:00';
+    const segOut = isLast ? cleanEndTime : '23:59:59';
+    const segDuration = isFirst
+      ? Math.max(0, 86400 - parseTimeToSeconds(cleanStartTime))
+      : isLast
+      ? parseTimeToSeconds(cleanEndTime)
+      : 86400;
+
+    const partLabel = `[Part ${i + 1}/${totalDays}]`;
+    const shiftSummary = `Multi-day session: ${formatDateMMDDYYYY(startDate)} ${formatTime24to12(cleanStartTime)} → ${formatDateMMDDYYYY(adjustedEndDate)} ${formatTime24to12(cleanEndTime)}`;
+    const segNote = note ? `${note} • ${partLabel}` : `${shiftSummary} ${partLabel}`;
+
+    segments.push({
+      date: dayStr,
+      segmentDuration: segDuration,
+      punch: {
+        inDate: dayStr,
+        inTime: segIn,
+        outDate: dayStr,
+        outTime: segOut,
+        sessionId,
+        isMultiDaySegment: true,
+        segmentIndex: i + 1,
+        totalSegments: totalDays,
+        totalSessionSeconds,
+        projectId,
+        projectName,
+        note: segNote,
+      },
+    });
+  }
+
+  return segments;
 }
 
 export function formatSecondsToHHMMSS(totalSeconds: number): string {
@@ -120,7 +281,7 @@ export function calculateDayTotalSeconds(
     const pair = punches[i];
     if (!pair) continue;
     if (pair.inTime && pair.outTime) {
-      totalSec += getDurationInSeconds(pair.inTime, pair.outTime);
+      totalSec += getDurationInSeconds(pair.inTime, pair.outTime, pair.inDate, pair.outDate);
     } else if (pair.inTime && !pair.outTime && activeLiveInTime === pair.inTime && currentLiveSeconds !== undefined) {
       totalSec += currentLiveSeconds;
     }
@@ -193,7 +354,7 @@ export function calculateMetrics(
         punchCount++;
       }
       if (p.inTime && p.outTime) {
-        const dur = getDurationInSeconds(p.inTime, p.outTime);
+        const dur = getDurationInSeconds(p.inTime, p.outTime, p.inDate, p.outDate);
         daySec += dur;
 
         const projId = p.projectId || record.primaryProjectId || 'unassigned';
@@ -258,7 +419,7 @@ export function calculateMetrics(
   let currentStreak = 0;
   const daysMap = new Map<string, number>();
   sorted.forEach((r) => {
-    const sec = (r.punches || []).reduce((acc, p) => acc + (p.inTime && p.outTime ? getDurationInSeconds(p.inTime, p.outTime) : 0), 0);
+    const sec = (r.punches || []).reduce((acc, p) => acc + (p.inTime && p.outTime ? getDurationInSeconds(p.inTime, p.outTime, p.inDate, p.outDate) : 0), 0);
     if (sec > 0) daysMap.set(r.date, sec);
   });
 
@@ -403,7 +564,7 @@ export function getWeeklyChartData(
     for (let i = 0; i < punches.length; i++) {
       const p = punches[i];
       if (p.inTime && p.outTime) {
-        dailySec += getDurationInSeconds(p.inTime, p.outTime);
+        dailySec += getDurationInSeconds(p.inTime, p.outTime, p.inDate, p.outDate);
       }
     }
     const hours = dailySec / 3600;
@@ -425,13 +586,25 @@ export function getWeeklyChartData(
         if (p.inTime && p.outTime) {
           const start = timeToDecimalHours(p.inTime);
           const end = timeToDecimalHours(p.outTime);
+          const durSec = getDurationInSeconds(p.inTime, p.outTime, p.inDate, p.outDate);
+          const matchProject = projects.find((pr) => pr.id === p.projectId);
+
           if (end > start) {
-            const durSec = getDurationInSeconds(p.inTime, p.outTime);
-            const matchProject = projects.find((pr) => pr.id === p.projectId);
             spans[diffThisDays].push({
               startHour: start,
               endHour: end,
               label: `${formatTime24to12(p.inTime)} – ${formatTime24to12(p.outTime)}`,
+              durationFormatted: formatSecondsToHuman(durSec),
+              projectName: matchProject?.name || p.projectName,
+              projectColor: matchProject?.color,
+              note: p.note,
+            });
+          } else if (end < start) {
+            // Overnight shift spanning across midnight to next morning
+            spans[diffThisDays].push({
+              startHour: start,
+              endHour: 24,
+              label: `${formatTime24to12(p.inTime)} – ${formatTime24to12(p.outTime)} (Overnight)`,
               durationFormatted: formatSecondsToHuman(durSec),
               projectName: matchProject?.name || p.projectName,
               projectColor: matchProject?.color,
@@ -524,7 +697,7 @@ export function generateQuarterCSV(
       punchCells.push(`"${(p.note || '').replace(/"/g, '""')}"`);
 
       if (p.inTime && p.outTime) {
-        daySec += getDurationInSeconds(p.inTime, p.outTime);
+        daySec += getDurationInSeconds(p.inTime, p.outTime, p.inDate, p.outDate);
       }
     }
 
@@ -809,7 +982,7 @@ export function getQuarterWeeksBreakdown(
       if (rec && rec.punches) {
         for (const p of rec.punches) {
           if (p.inTime && p.outTime) {
-            daySec += getDurationInSeconds(p.inTime, p.outTime);
+            daySec += getDurationInSeconds(p.inTime, p.outTime, p.inDate, p.outDate);
           }
         }
       }

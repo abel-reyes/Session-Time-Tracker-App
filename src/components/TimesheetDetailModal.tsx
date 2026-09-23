@@ -466,7 +466,12 @@ export function TimesheetDetailModal({
                                     className="w-18 px-1 py-0.5 text-center text-xs border border-emerald-300 rounded-md bg-white focus:outline-emerald-600 font-mono"
                                   />
                                 ) : (
-                                  <span className={pair?.inTime ? 'text-emerald-800 font-medium' : 'text-slate-300'}>
+                                  <span className={pair?.inTime ? 'text-emerald-800 font-medium inline-flex items-center gap-1 justify-center' : 'text-slate-300'}>
+                                    {pair?.isMultiDaySegment && (
+                                      <span title={`Cross-day segment ${pair.segmentIndex !== undefined ? pair.segmentIndex + 1 : ''}/${pair.totalSegments || ''}`} className="text-[10px]">
+                                        🌙
+                                      </span>
+                                    )}
                                     {pair?.inTime || '—'}
                                   </span>
                                 )}

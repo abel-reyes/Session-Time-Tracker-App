@@ -19,7 +19,8 @@ import {
   getDurationInSeconds, 
   formatSecondsToHuman,
   formatSecondsToHHMMSS,
-  calculateDayTotalSeconds
+  calculateDayTotalSeconds,
+  splitMultiDaySession
 } from '../utils/timeCalculations';
 import { ProjectBadge } from './ProjectBadge';
 
@@ -30,6 +31,7 @@ interface PastDateEntryModalProps {
   records: DayRecord[];
   projects?: Project[];
   onSaveDayRecord: (updatedRecord: DayRecord) => void;
+  onSaveMultipleRecords?: (records: DayRecord[]) => void;
   themeColor?: string;
   secondaryColor?: string;
 }
@@ -41,6 +43,7 @@ export function PastDateEntryModal({
   records,
   projects = [],
   onSaveDayRecord,
+  onSaveMultipleRecords,
   themeColor = '#0284C7',
   secondaryColor = '#0F172A',
 }: PastDateEntryModalProps) {
@@ -52,7 +55,11 @@ export function PastDateEntryModal({
   const [currentPunches, setCurrentPunches] = useState<PunchPair[]>([]);
   const [dayNotes, setDayNotes] = useState<string>('');
   
-  // New session input fields
+  // New session input fields (supports multi-day and overnight shifts)
+  const [newEndDate, setNewEndDate] = useState<string>(() => {
+    if (initialDate) return initialDate;
+    return formatDateToYYYYMMDD(new Date());
+  });
   const [newInTime, setNewInTime] = useState<string>('09:00:00');
   const [newOutTime, setNewOutTime] = useState<string>('17:00:00');
   const [newProjectId, setNewProjectId] = useState<string>(projects[0]?.id || '');
@@ -63,7 +70,9 @@ export function PastDateEntryModal({
 
   useEffect(() => {
     if (isOpen) {
-      setSelectedDate(initialDate || formatDateToYYYYMMDD(new Date()));
+      const d = initialDate || formatDateToYYYYMMDD(new Date());
+      setSelectedDate(d);
+      setNewEndDate(d);
     }
   }, [isOpen, initialDate]);
 
@@ -107,27 +116,77 @@ export function PastDateEntryModal({
     let formattedOut = newOutTime.trim();
     if (formattedOut.length === 5) formattedOut += ':00';
 
-    if (formattedOut) {
-      const dur = getDurationInSeconds(formattedIn, formattedOut);
-      if (dur <= 0) {
-        setFormError('End time must be after Start time.');
+    const matchProj = projects.find((p) => p.id === newProjectId);
+
+    if (newEndDate > selectedDate) {
+      if (!formattedOut) {
+        setFormError('Please provide an End (Clock Out) time for multi-day sessions.');
         return;
       }
-    }
+      const dur = getDurationInSeconds(formattedIn, formattedOut, selectedDate, newEndDate);
+      if (dur <= 0) {
+        setFormError('End date/time must be strictly after Start date/time.');
+        return;
+      }
 
-    const matchProj = projects.find((p) => p.id === newProjectId);
-    const updated = [
-      ...currentPunches,
-      {
-        inTime: formattedIn,
-        outTime: formattedOut,
-        projectId: newProjectId || undefined,
-        projectName: matchProj?.name,
-        note: newNote.trim() || undefined,
-      },
-    ];
-    setCurrentPunches(updated);
-    setNewNote('');
+      const segments = splitMultiDaySession(
+        selectedDate,
+        formattedIn,
+        newEndDate,
+        formattedOut,
+        newProjectId || undefined,
+        matchProj?.name,
+        newNote.trim() || undefined
+      );
+
+      // Add Day 1's segment to current day's punches
+      setCurrentPunches([...currentPunches, segments[0].punch]);
+
+      // If there are subsequent segments, save them across subsequent days
+      if (onSaveMultipleRecords && segments.length > 1) {
+        const recordsToUpdate: DayRecord[] = [];
+        for (let i = 1; i < segments.length; i++) {
+          const seg = segments[i];
+          const existing = records.find((r) => r.date === seg.date);
+          if (existing) {
+            recordsToUpdate.push({
+              ...existing,
+              punches: [...(existing.punches || []), seg.punch],
+            });
+          } else {
+            recordsToUpdate.push({
+              date: seg.date,
+              punches: [seg.punch],
+            });
+          }
+        }
+        onSaveMultipleRecords(recordsToUpdate);
+      }
+      setNewNote('');
+    } else {
+      if (formattedOut) {
+        const dur = getDurationInSeconds(formattedIn, formattedOut);
+        if (dur <= 0) {
+          setFormError('End time must be after Start time.');
+          return;
+        }
+      }
+
+      const updated = [
+        ...currentPunches,
+        {
+          inDate: selectedDate,
+          inTime: formattedIn,
+          outDate: selectedDate,
+          outTime: formattedOut,
+          projectId: newProjectId || undefined,
+          projectName: matchProj?.name,
+          note: newNote.trim() || undefined,
+        },
+      ];
+      setCurrentPunches(updated);
+      setNewNote('');
+    }
   };
 
   const handleRemoveSession = (index: number) => {
@@ -151,7 +210,9 @@ export function PastDateEntryModal({
   };
 
   const dayTotalSec = calculateDayTotalSeconds(currentPunches);
-  const newSessionSec = (newInTime && newOutTime) ? getDurationInSeconds(newInTime, newOutTime) : 0;
+  const newSessionSec = (newInTime && newOutTime) 
+    ? getDurationInSeconds(newInTime, newOutTime, selectedDate, newEndDate) 
+    : 0;
 
   return (
     <div 
@@ -378,6 +439,51 @@ export function PastDateEntryModal({
                     setFormError(null);
                   }}
                   className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 font-mono focus:outline-teal-600"
+                />
+              </div>
+            </div>
+
+            {/* End Date selector (Supports multi-day journeys across calendar dates) */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-white/70 p-2.5 rounded-lg border border-teal-200/60">
+              <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700">
+                <span>Clock Out Date:</span>
+                {newEndDate > selectedDate ? (
+                  <span className="text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded text-[10px]">
+                    🌙 Multi-Day ({formatDateMMDDYYYY(newEndDate)})
+                  </span>
+                ) : (
+                  <span className="text-slate-500 font-normal">Same day</span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setNewEndDate(selectedDate)}
+                  className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-colors cursor-pointer ${
+                    newEndDate === selectedDate ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  Same Day
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const d = new Date(`${selectedDate}T00:00:00`);
+                    d.setDate(d.getDate() + 1);
+                    setNewEndDate(formatDateToYYYYMMDD(d));
+                  }}
+                  className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-colors cursor-pointer ${
+                    newEndDate !== selectedDate ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  +1 Day (Overnight)
+                </button>
+                <input
+                  type="date"
+                  min={selectedDate}
+                  value={newEndDate}
+                  onChange={(e) => setNewEndDate(e.target.value)}
+                  className="bg-white border border-slate-300 rounded px-2 py-0.5 text-[11px] font-mono font-semibold text-slate-800"
                 />
               </div>
             </div>

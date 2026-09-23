@@ -21,10 +21,12 @@ import {
 } from 'lucide-react';
 import { 
   formatDateToYYYYMMDD, 
+  formatDateMMDDYYYY,
   formatTimeToHHMMSS, 
   formatTime24to12, 
   formatSecondsToHHMMSS, 
-  getDurationInSeconds 
+  getDurationInSeconds,
+  getActiveElapsedSeconds
 } from '../utils/timeCalculations';
 import { DayRecord, PunchPair, Project } from '../types';
 import { ConfirmModal, ConfirmDialogOptions } from './ConfirmModal';
@@ -41,6 +43,8 @@ interface PunchClockCardProps {
   onUpdateTodaySessions?: (updatedPunches: PunchPair[]) => void;
   isPunchedIn: boolean;
   activeInTime: string | null;
+  activeInDate?: string | null;
+  isMultiDay?: boolean;
   lastPunchTime: string | null;
   statusMessage: { text: string; isError: boolean } | null;
   onDismissStatus: () => void;
@@ -59,6 +63,8 @@ export function PunchClockCard({
   onUpdateTodaySessions,
   isPunchedIn,
   activeInTime,
+  activeInDate,
+  isMultiDay,
   lastPunchTime,
   statusMessage,
   onDismissStatus,
@@ -91,7 +97,7 @@ export function PunchClockCard({
     }
   }, [selectedProjectId, projects]);
 
-  // Active session stopwatch
+  // Active session stopwatch (supports multi-day and overnight sessions)
   useEffect(() => {
     if (!isPunchedIn || !activeInTime) {
       setSessionSeconds(0);
@@ -99,15 +105,14 @@ export function PunchClockCard({
     }
 
     const calculateCurrentElapsed = () => {
-      const nowStr = formatTimeToHHMMSS(new Date());
-      const dur = getDurationInSeconds(activeInTime, nowStr);
+      const dur = getActiveElapsedSeconds(activeInDate, activeInTime, new Date());
       setSessionSeconds(dur);
     };
 
     calculateCurrentElapsed();
     const interval = setInterval(calculateCurrentElapsed, 1000);
     return () => clearInterval(interval);
-  }, [isPunchedIn, activeInTime]);
+  }, [isPunchedIn, activeInTime, activeInDate]);
 
   const executePunch = (type: 'IN' | 'OUT') => {
     onPunch(type, undefined, undefined, localSelectedProj || undefined, activeNote.trim() || undefined);
@@ -248,11 +253,19 @@ export function PunchClockCard({
             <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
               Live Status
             </div>
-            <div className="text-base md:text-lg font-bold text-slate-900 flex items-center gap-2">
+            <div className="text-base md:text-lg font-bold text-slate-900 flex items-center gap-2 flex-wrap">
               {isPunchedIn ? (
-                <span className="text-emerald-700">
-                  Clocked IN <span className="text-xs font-normal text-emerald-600 font-mono">(Since {formatTime24to12(activeInTime)})</span>
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-emerald-700">Clocked IN</span>
+                  <span className="text-xs font-normal text-emerald-600 font-mono">
+                    (Since {formatTime24to12(activeInTime)}{isMultiDay && activeInDate ? ` • ${formatDateMMDDYYYY(activeInDate)}` : ''})
+                  </span>
+                  {isMultiDay && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs">
+                      🌙 Multi-Day Active
+                    </span>
+                  )}
+                </div>
               ) : (
                 <span className="text-slate-700">
                   Clocked OUT{' '}
@@ -274,11 +287,21 @@ export function PunchClockCard({
               <Clock className="w-4 h-4 animate-spin" style={{ animationDuration: '4s' }} />
             </div>
             <div>
-              <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                Current Session
+              <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                <span>Current Session</span>
+                {sessionSeconds >= 86400 && (
+                  <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-1 rounded">
+                    Day {Math.floor(sessionSeconds / 86400) + 1}
+                  </span>
+                )}
               </div>
-              <div className="text-base font-black font-mono text-emerald-700 tracking-tight leading-none">
-                {formatSecondsToHHMMSS(sessionSeconds)}
+              <div className="text-base font-black font-mono text-emerald-700 tracking-tight leading-none flex items-baseline gap-1">
+                <span>{formatSecondsToHHMMSS(sessionSeconds)}</span>
+                {sessionSeconds >= 86400 && (
+                  <span className="text-[10px] font-bold text-indigo-600">
+                    (+{Math.floor(sessionSeconds / 86400)}d)
+                  </span>
+                )}
               </div>
             </div>
           </div>

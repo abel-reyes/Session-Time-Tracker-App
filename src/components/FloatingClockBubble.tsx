@@ -16,8 +16,10 @@ import {
 import { 
   formatTimeToHHMMSS, 
   formatTime24to12, 
+  formatDateMMDDYYYY,
   formatSecondsToHHMMSS, 
-  getDurationInSeconds 
+  getDurationInSeconds,
+  getActiveElapsedSeconds
 } from '../utils/timeCalculations';
 import { DayRecord, PunchPair, Project } from '../types';
 import { ConfirmModal, ConfirmDialogOptions } from './ConfirmModal';
@@ -31,6 +33,8 @@ interface FloatingClockBubbleProps {
   onPunch: (type: 'IN' | 'OUT', customDate?: string, customTime?: string, projectId?: string, note?: string) => void;
   isPunchedIn: boolean;
   activeInTime: string | null;
+  activeInDate?: string | null;
+  isMultiDay?: boolean;
   lastPunchTime: string | null;
   themeColor: string;
   secondaryColor?: string;
@@ -45,6 +49,8 @@ export function FloatingClockBubble({
   onPunch,
   isPunchedIn,
   activeInTime,
+  activeInDate,
+  isMultiDay,
   lastPunchTime,
   themeColor,
   secondaryColor = '#0F172A',
@@ -66,7 +72,7 @@ export function FloatingClockBubble({
     }
   }, [selectedProjectId, projects]);
 
-  // Live stopwatch when clocked in
+  // Live stopwatch when clocked in (supports multi-day and overnight sessions)
   useEffect(() => {
     if (!isPunchedIn || !activeInTime) {
       setSessionSeconds(0);
@@ -74,15 +80,14 @@ export function FloatingClockBubble({
     }
 
     const calculateCurrentElapsed = () => {
-      const nowStr = formatTimeToHHMMSS(new Date());
-      const dur = getDurationInSeconds(activeInTime, nowStr);
+      const dur = getActiveElapsedSeconds(activeInDate, activeInTime, new Date());
       setSessionSeconds(dur);
     };
 
     calculateCurrentElapsed();
     const interval = setInterval(calculateCurrentElapsed, 1000);
     return () => clearInterval(interval);
-  }, [isPunchedIn, activeInTime]);
+  }, [isPunchedIn, activeInTime, activeInDate]);
 
   const executePunch = (type: 'IN' | 'OUT') => {
     onPunch(type, undefined, undefined, localSelectedProj || undefined, activeNote.trim() || undefined);
@@ -158,8 +163,9 @@ export function FloatingClockBubble({
           {/* Mini Live Timer Badge if Clocked In */}
           {isPunchedIn ? (
             <div className="flex flex-col text-left pr-0.5">
-              <span className="text-[9px] font-extrabold tracking-wider uppercase opacity-90 leading-tight">
+              <span className="text-[9px] font-extrabold tracking-wider uppercase opacity-90 leading-tight flex items-center gap-1">
                 Active
+                {isMultiDay && <span className="text-[8px] bg-white/30 px-1 rounded-sm">🌙 +{Math.max(1, Math.floor(sessionSeconds / 86400))}d</span>}
               </span>
               <span className="font-mono text-xs font-black tracking-tight leading-tight">
                 {formatSecondsToHHMMSS(sessionSeconds)}
@@ -256,11 +262,21 @@ export function FloatingClockBubble({
                       <Clock className="w-5 h-5 animate-spin" style={{ animationDuration: '4s' }} />
                     </div>
                     <div className="space-y-0.5">
-                      <div className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">
-                        Elapsed Time
+                      <div className="text-[10px] uppercase font-bold text-slate-500 tracking-wider flex items-center gap-1.5">
+                        <span>Elapsed Time</span>
+                        {isMultiDay && (
+                          <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.2 rounded">
+                            🌙 Multi-Day Active
+                          </span>
+                        )}
                       </div>
-                      <div className="font-mono text-2xl font-black text-emerald-700 tracking-tight leading-none">
-                        {formatSecondsToHHMMSS(sessionSeconds)}
+                      <div className="font-mono text-2xl font-black text-emerald-700 tracking-tight leading-none flex items-baseline gap-1">
+                        <span>{formatSecondsToHHMMSS(sessionSeconds)}</span>
+                        {sessionSeconds >= 86400 && (
+                          <span className="text-xs font-bold text-indigo-600">
+                            (+{Math.floor(sessionSeconds / 86400)}d)
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -269,6 +285,11 @@ export function FloatingClockBubble({
                     <div className="font-mono font-bold text-slate-800">
                       {activeInTime ? formatTime24to12(activeInTime) : '--:--'}
                     </div>
+                    {isMultiDay && activeInDate && (
+                      <div className="text-[9px] font-semibold text-slate-400">
+                        {formatDateMMDDYYYY(activeInDate)}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

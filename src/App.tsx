@@ -64,6 +64,9 @@ import {
   getQuarterWeeksBreakdown,
   getDurationInSeconds,
   formatSecondsToHHMMSS,
+  formatSecondsToHuman,
+  getActiveElapsedSeconds,
+  splitMultiDaySession,
   generateQuarterCSV,
 } from './utils/timeCalculations';
 import {
@@ -406,51 +409,74 @@ export default function App() {
   }, [records, todayStr]);
 
   // Determine current Punch State (IN vs OUT) dynamically across any number of punch pairs
+  // Seamlessly supports overnight shifts and multi-day sessions (e.g. clocked in on Sep 1 at 23:45, continuing into Sep 3)
   const punchState = useMemo(() => {
-    if (!todayRecord || !todayRecord.punches || todayRecord.punches.length === 0) {
-      return {
-        isPunchedIn: false,
-        activeInTime: null as string | null,
-        lastPunchTime: null as string | null,
-        activeSlotIndex: -1,
-      };
-    }
-
-    let lastIn: string | null = null;
-    let lastOut: string | null = null;
+    // 1. Search through ALL records (newest date first) for an open session (inTime without outTime)
+    const sortedRecordsDesc = [...records].sort((a, b) => b.date.localeCompare(a.date));
+    
+    let activeOpenPunch: PunchPair | null = null;
+    let activeRecordDate: string | null = null;
     let activeSlot = -1;
 
-    for (let i = 0; i < todayRecord.punches.length; i++) {
-      const p = todayRecord.punches[i];
-      if (p.inTime) {
-        lastIn = p.inTime;
+    for (const rec of sortedRecordsDesc) {
+      if (rec.punches && Array.isArray(rec.punches)) {
+        for (let i = 0; i < rec.punches.length; i++) {
+          const p = rec.punches[i];
+          if (p.inTime && !p.outTime) {
+            activeOpenPunch = p;
+            activeRecordDate = p.inDate || rec.date;
+            activeSlot = i;
+            break;
+          }
+        }
       }
-      if (p.outTime) {
-        lastOut = p.outTime;
-      }
-      if (p.inTime && !p.outTime) {
-        activeSlot = i;
-      }
+      if (activeOpenPunch) break;
     }
 
-    if (activeSlot !== -1 && lastIn) {
+    if (activeOpenPunch && activeOpenPunch.inTime && activeRecordDate) {
+      const isMultiDay = activeRecordDate !== todayStr;
       return {
         isPunchedIn: true,
-        activeInTime: lastIn,
-        lastPunchTime: lastIn,
+        activeInTime: activeOpenPunch.inTime,
+        activeInDate: activeRecordDate,
+        activeProjectId: activeOpenPunch.projectId,
+        activeProjectName: activeOpenPunch.projectName,
+        activeNote: activeOpenPunch.note,
+        lastPunchTime: activeOpenPunch.inTime,
         activeSlotIndex: activeSlot,
+        isMultiDay,
       };
+    }
+
+    // 2. Otherwise, user is clocked out. Find the most recent punch time
+    let lastOutTime: string | null = null;
+    for (const rec of sortedRecordsDesc) {
+      if (rec.punches && Array.isArray(rec.punches)) {
+        for (let i = rec.punches.length - 1; i >= 0; i--) {
+          const p = rec.punches[i];
+          if (p.outTime || p.inTime) {
+            lastOutTime = p.outTime || p.inTime || null;
+            break;
+          }
+        }
+      }
+      if (lastOutTime) break;
     }
 
     return {
       isPunchedIn: false,
-      activeInTime: null,
-      lastPunchTime: lastOut || lastIn,
+      activeInTime: null as string | null,
+      activeInDate: null as string | null,
+      activeProjectId: undefined as string | undefined,
+      activeProjectName: undefined as string | undefined,
+      activeNote: undefined as string | undefined,
+      lastPunchTime: lastOutTime,
       activeSlotIndex: -1,
+      isMultiDay: false,
     };
-  }, [todayRecord]);
+  }, [records, todayStr]);
 
-  // Live timer tick for active session
+  // Live timer tick for active session (supports cross-midnight and multi-day sessions)
   useEffect(() => {
     if (!punchState.isPunchedIn || !punchState.activeInTime) {
       setLiveElapsedSeconds(0);
@@ -458,15 +484,14 @@ export default function App() {
     }
 
     const tick = () => {
-      const nowStr = formatTimeToHHMMSS(new Date());
-      const s = getDurationInSeconds(punchState.activeInTime, nowStr);
+      const s = getActiveElapsedSeconds(punchState.activeInDate, punchState.activeInTime, new Date());
       setLiveElapsedSeconds(s);
     };
 
     tick();
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [punchState.isPunchedIn, punchState.activeInTime]);
+  }, [punchState.isPunchedIn, punchState.activeInTime, punchState.activeInDate]);
 
   // Dashboard Metrics & Charts calculation
   const metrics: DashboardMetrics = useMemo(() => {
@@ -481,7 +506,7 @@ export default function App() {
     return getQuarterWeeksBreakdown(records, activeQuarter, liveElapsedSeconds);
   }, [records, activeQuarter, liveElapsedSeconds]);
 
-  // Handle Clock In / Clock Out supporting indefinite sessions, projects, and notes
+  // Handle Clock In / Clock Out supporting multi-day journeys, overnight shifts, indefinite sessions, projects, and notes
   const handlePunch = (
     type: 'IN' | 'OUT', 
     customDateStr?: string, 
@@ -494,16 +519,25 @@ export default function App() {
     const targetTime = customTimeStr || formatTimeToHHMMSS(now);
 
     const updatedRecords = [...records];
-    let recIdx = updatedRecords.findIndex((r) => r.date === targetDate);
-
     const activeProj = projects.find((p) => p.id === (projectId || selectedProjectId));
 
-    if (recIdx === -1) {
-      if (type === 'IN') {
+    if (type === 'IN') {
+      // Check if there is an active session already open across any records
+      if (punchState.isPunchedIn && punchState.activeInTime && punchState.activeInDate) {
+        setStatusMessage({
+          text: `Active session already in progress (started ${formatDateMMDDYYYY(punchState.activeInDate)} at ${formatTime24to12(punchState.activeInTime)}). Please Clock OUT before clocking IN again.`,
+          isError: true,
+        });
+        return;
+      }
+
+      let recIdx = updatedRecords.findIndex((r) => r.date === targetDate);
+      if (recIdx === -1) {
         const newRecord: DayRecord = {
           date: targetDate,
           punches: [
             { 
+              inDate: targetDate,
               inTime: targetTime, 
               outTime: '', 
               projectId: activeProj?.id,
@@ -513,131 +547,189 @@ export default function App() {
           ],
         };
         updatedRecords.push(newRecord);
-        saveQuarterData(activeQuarter, updatedRecords);
-        setRecords(updatedRecords);
-        triggerAutoSync();
-
-        if (settings.soundEnabled) playPunchInSound();
-        setStatusMessage({
-          text: `Clocked IN at ${formatTime24to12(targetTime)} for ${formatDateMMDDYYYY(targetDate)}${activeProj ? ` [${activeProj.name}]` : ''}`,
-          isError: false,
-        });
-        return;
       } else {
-        setStatusMessage({
-          text: `Error: Cannot Clock OUT without an active Clock IN for ${formatDateMMDDYYYY(targetDate)}.`,
-          isError: true,
-        });
-        return;
-      }
-    }
+        const currentRecord = { ...updatedRecords[recIdx] };
+        const punches: PunchPair[] = currentRecord.punches ? [...currentRecord.punches.map((p) => ({ ...p }))] : [];
+        let inserted = false;
 
-    const currentRecord = { ...updatedRecords[recIdx] };
-    const punches: PunchPair[] = currentRecord.punches ? [...currentRecord.punches.map((p) => ({ ...p }))] : [];
-
-    if (type === 'IN') {
-      let inserted = false;
-      for (let i = 0; i < punches.length; i++) {
-        if (!punches[i].inTime) {
-          if (i > 0 && !punches[i - 1].outTime) {
-            setStatusMessage({
-              text: `Error: Incomplete session history. You must Clock OUT from Session #${i} before clocking IN again.`,
-              isError: true,
-            });
-            return;
+        for (let i = 0; i < punches.length; i++) {
+          if (!punches[i].inTime) {
+            punches[i].inDate = targetDate;
+            punches[i].inTime = targetTime;
+            punches[i].outTime = '';
+            punches[i].projectId = activeProj?.id;
+            punches[i].projectName = activeProj?.name;
+            if (note) punches[i].note = note;
+            inserted = true;
+            break;
           }
-          punches[i].inTime = targetTime;
-          punches[i].projectId = activeProj?.id;
-          punches[i].projectName = activeProj?.name;
-          if (note) punches[i].note = note;
-          inserted = true;
-          break;
         }
-      }
 
-      // If no empty slot found, automatically append a new session pair (indefinite sessions support!)
-      if (!inserted) {
-        const last = punches[punches.length - 1];
-        if (last && last.inTime && !last.outTime) {
-          setStatusMessage({
-            text: `Error: Session #${punches.length} is currently active. Clock OUT before starting another session.`,
-            isError: true,
+        if (!inserted) {
+          punches.push({ 
+            inDate: targetDate,
+            inTime: targetTime, 
+            outTime: '',
+            projectId: activeProj?.id,
+            projectName: activeProj?.name,
+            note: note || undefined
           });
-          return;
         }
-        punches.push({ 
-          inTime: targetTime, 
-          outTime: '',
-          projectId: activeProj?.id,
-          projectName: activeProj?.name,
-          note: note || undefined
-        });
+
+        currentRecord.punches = punches;
+        updatedRecords[recIdx] = currentRecord;
       }
 
-      currentRecord.punches = punches;
-      updatedRecords[recIdx] = currentRecord;
       saveQuarterData(activeQuarter, updatedRecords);
       setRecords(updatedRecords);
       triggerAutoSync();
 
       if (settings.soundEnabled) playPunchInSound();
       setStatusMessage({
-        text: `Clocked IN at ${formatTime24to12(targetTime)} for ${formatDateMMDDYYYY(targetDate)} (Session #${punches.length}${activeProj ? ` • ${activeProj.name}` : ''})`,
+        text: `Clocked IN at ${formatTime24to12(targetTime)} for ${formatDateMMDDYYYY(targetDate)}${activeProj ? ` • ${activeProj.name}` : ''}`,
         isError: false,
       });
     } else {
-      // CLOCK OUT: Find the open inTime slot
-      let inserted = false;
-      let durationStr = '';
-      let sessionIndex = -1;
+      // CLOCK OUT: Search for any active open punch across all records (newest date first)
+      let openRecIdx = -1;
+      let openPunchIdx = -1;
 
-      for (let i = 0; i < punches.length; i++) {
-        if (punches[i].inTime && !punches[i].outTime) {
-          punches[i].outTime = targetTime;
-          if (note) {
-            punches[i].note = note;
+      for (let r = updatedRecords.length - 1; r >= 0; r--) {
+        const rec = updatedRecords[r];
+        if (rec.punches && Array.isArray(rec.punches)) {
+          for (let p = 0; p < rec.punches.length; p++) {
+            if (rec.punches[p].inTime && !rec.punches[p].outTime) {
+              openRecIdx = r;
+              openPunchIdx = p;
+              break;
+            }
           }
-          const durSec = getDurationInSeconds(punches[i].inTime, targetTime);
-          durationStr = formatSecondsToHHMMSS(durSec);
-          sessionIndex = i + 1;
-          inserted = true;
-          break;
         }
+        if (openRecIdx !== -1) break;
       }
 
-      if (!inserted) {
+      if (openRecIdx === -1 || openPunchIdx === -1) {
         setStatusMessage({
-          text: `Error: Cannot Clock OUT without an active Clock IN for ${formatDateMMDDYYYY(targetDate)}.`,
+          text: `Error: Cannot Clock OUT because no active Clock IN session was found.`,
           isError: true,
         });
         return;
       }
 
-      currentRecord.punches = punches;
-      updatedRecords[recIdx] = currentRecord;
-      saveQuarterData(activeQuarter, updatedRecords);
-      setRecords(updatedRecords);
-      triggerAutoSync();
+      const openRec = { 
+        ...updatedRecords[openRecIdx], 
+        punches: [...updatedRecords[openRecIdx].punches.map((p) => ({ ...p }))] 
+      };
+      const activePunch = { ...openRec.punches[openPunchIdx] };
+      const startDate = activePunch.inDate || openRec.date;
+      const startTime = activePunch.inTime!;
+      const endDate = targetDate;
+      const endTime = targetTime;
+      const activeProjId = activePunch.projectId || activeProj?.id;
+      const activeProjName = activePunch.projectName || activeProj?.name;
+      const sessionNote = note || activePunch.note;
 
-      if (settings.soundEnabled) {
-        playPunchOutSound();
-      }
+      // 1. Same-day Clock Out
+      if (startDate === endDate) {
+        const durSec = getDurationInSeconds(startTime, endTime, startDate, endDate);
+        activePunch.outDate = endDate;
+        activePunch.outTime = endTime;
+        activePunch.totalSessionSeconds = durSec;
+        if (sessionNote) activePunch.note = sessionNote;
+        
+        openRec.punches[openPunchIdx] = activePunch;
+        updatedRecords[openRecIdx] = openRec;
 
-      try {
-        confetti({
-          particleCount: 35,
-          spread: 60,
-          origin: { y: 0.8 },
-          colors: ['#059669', '#10b981', '#34d399', '#f59e0b'],
+        saveQuarterData(activeQuarter, updatedRecords);
+        setRecords(updatedRecords);
+        triggerAutoSync();
+
+        if (settings.soundEnabled) playPunchOutSound();
+        try {
+          confetti({
+            particleCount: 35,
+            spread: 60,
+            origin: { y: 0.8 },
+            colors: ['#059669', '#10b981', '#34d399', '#f59e0b'],
+          });
+        } catch {
+          // Ignore
+        }
+
+        setStatusMessage({
+          text: `Clocked OUT at ${formatTime24to12(endTime)} for ${formatDateMMDDYYYY(startDate)} (Session #${openPunchIdx + 1}: ${formatSecondsToHuman(durSec)})`,
+          isError: false,
         });
-      } catch {
-        // Ignore
-      }
+      } else {
+        // 2. Cross-Midnight / Multi-Day Session (e.g. Sep 1 23:45 to Sep 3 12:20)
+        // Automatically partition the continuous session across individual days to preserve accurate 24-hr daily limits and charts!
+        const segments = splitMultiDaySession(
+          startDate,
+          startTime,
+          endDate,
+          endTime,
+          activeProjId,
+          activeProjName,
+          sessionNote
+        );
 
-      setStatusMessage({
-        text: `Clocked OUT at ${formatTime24to12(targetTime)} for ${formatDateMMDDYYYY(targetDate)} (Session #${sessionIndex}: ${durationStr})`,
-        isError: false,
-      });
+        if (segments.length === 0) {
+          setStatusMessage({
+            text: `Error: End time (${formatDateMMDDYYYY(endDate)} ${formatTime24to12(endTime)}) cannot be before Start time (${formatDateMMDDYYYY(startDate)} ${formatTime24to12(startTime)}).`,
+            isError: true,
+          });
+          return;
+        }
+
+        const totalSessionSec = segments.reduce((sum, s) => sum + s.segmentDuration, 0);
+
+        // Replace the start record's open punch with the first segment
+        openRec.punches[openPunchIdx] = segments[0].punch;
+        updatedRecords[openRecIdx] = openRec;
+
+        // Allocate subsequent segments across subsequent calendar day records
+        for (let i = 1; i < segments.length; i++) {
+          const seg = segments[i];
+          const existingIdx = updatedRecords.findIndex((r) => r.date === seg.date);
+          if (existingIdx >= 0) {
+            const existingRec = {
+              ...updatedRecords[existingIdx],
+              punches: [...(updatedRecords[existingIdx].punches || []).map((p) => ({ ...p }))],
+            };
+            existingRec.punches.push(seg.punch);
+            updatedRecords[existingIdx] = existingRec;
+          } else {
+            updatedRecords.push({
+              date: seg.date,
+              punches: [seg.punch],
+            });
+          }
+        }
+
+        // Keep records chronologically sorted
+        updatedRecords.sort((a, b) => a.date.localeCompare(b.date));
+
+        saveQuarterData(activeQuarter, updatedRecords);
+        setRecords(updatedRecords);
+        triggerAutoSync();
+
+        if (settings.soundEnabled) playPunchOutSound();
+        try {
+          confetti({
+            particleCount: 45,
+            spread: 70,
+            origin: { y: 0.8 },
+            colors: ['#059669', '#10b981', '#34d399', '#6366f1'],
+          });
+        } catch {
+          // Ignore
+        }
+
+        setStatusMessage({
+          text: `Clocked OUT at ${formatTime24to12(endTime)}! Multi-day session (${formatSecondsToHuman(totalSessionSec)}) spanning ${formatDateMMDDYYYY(startDate)} to ${formatDateMMDDYYYY(endDate)} recorded.`,
+          isError: false,
+        });
+      }
     }
   };
 
@@ -698,6 +790,23 @@ export default function App() {
     } else {
       updated.push(record);
     }
+    saveQuarterData(activeQuarter, updated);
+    setRecords(updated);
+    triggerAutoSync();
+    if (settings.soundEnabled) playSuccessChime();
+  };
+
+  const handleSaveMultipleRecords = (recordsToSave: DayRecord[]) => {
+    const updated = [...records];
+    for (const rec of recordsToSave) {
+      const idx = updated.findIndex((r) => r.date === rec.date);
+      if (idx >= 0) {
+        updated[idx] = rec;
+      } else {
+        updated.push(rec);
+      }
+    }
+    updated.sort((a, b) => a.date.localeCompare(b.date));
     saveQuarterData(activeQuarter, updated);
     setRecords(updated);
     triggerAutoSync();
@@ -1131,6 +1240,8 @@ export default function App() {
               onUpdateTodaySessions={handleUpdateTodaySessions}
               isPunchedIn={punchState.isPunchedIn}
               activeInTime={punchState.activeInTime}
+              activeInDate={punchState.activeInDate}
+              isMultiDay={punchState.isMultiDay}
               lastPunchTime={punchState.lastPunchTime}
               statusMessage={statusMessage}
               onDismissStatus={() => setStatusMessage(null)}
@@ -1305,6 +1416,7 @@ export default function App() {
         records={records}
         projects={projects}
         onSaveDayRecord={handleSaveDayRecord}
+        onSaveMultipleRecords={handleSaveMultipleRecords}
         themeColor={settings.themeColor || '#0284C7'}
         secondaryColor={settings.chartColor || '#0F172A'}
       />
@@ -1337,6 +1449,8 @@ export default function App() {
           onPunch={handlePunch}
           isPunchedIn={punchState.isPunchedIn}
           activeInTime={punchState.activeInTime}
+          activeInDate={punchState.activeInDate}
+          isMultiDay={punchState.isMultiDay}
           lastPunchTime={punchState.lastPunchTime}
           themeColor={settings.themeColor || '#0284C7'}
           secondaryColor={settings.chartColor || '#0F172A'}
