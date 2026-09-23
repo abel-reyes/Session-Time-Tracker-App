@@ -79,9 +79,11 @@ A modern, high-precision session timestamp tracker and productivity analytics pl
 
 Session Time Tracker utilizes a unified full-stack architecture pairing a fast React 19 client with a lightweight Express server.
 
+
 ```
+
 ┌─────────────────────────────────────────────────────────────┐
-│                       Client (SPA)                          │
+│                        Client (SPA)                         │
 │                                                             │
 │   React 19 + TypeScript + Tailwind CSS v4 + Motion/React    │
 │   ┌───────────────────┐  ┌──────────────────────────────┐   │
@@ -95,7 +97,7 @@ Session Time Tracker utilizes a unified full-stack architecture pairing a fast R
          HTTP / REST                 Sync Payloads
               │                           │
 ┌─────────────▼───────────────────────────▼───────────────────┐
-│                      Express Server                         │
+│                       Express Server                        │
 │                                                             │
 │   Node.js runtime + esbuild CommonJS bundle (`dist/`)       │
 │   ┌─────────────────────────────────────────────────────┐   │
@@ -110,6 +112,7 @@ Session Time Tracker utilizes a unified full-stack architecture pairing a fast R
 │   │ File-Based Durable Persistence (`data/*.json`)      │   │
 │   └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
+
 ```
 
 - **Development**: `tsx server.ts` boots the server while mounting Vite's development middleware (`appType: "spa"`) to serve hot-reloaded TypeScript modules on a single port.
@@ -139,52 +142,55 @@ Session Time Tracker utilizes a unified full-stack architecture pairing a fast R
 
 ## Project Directory Structure
 
+
 ```
-├── data/                       # Local JSON database storage
-│   ├── db.json                 # Primary application database
-│   ├── stats.json              # Aggregated metrics cache
-│   └── suggestions.json        # Change requests & user feedback
-├── public/                     # Static public assets
-│   ├── icon.svg                # Application vector icon
-│   ├── manifest.json           # PWA Web Application Manifest
-│   └── sw.js                   # Service Worker for offline capability
-├── src/                        # Frontend source code
-│   ├── components/             # Reusable UI component modules
-│   │   ├── AuthModal.tsx       # User sign-in & session setup
-│   │   ├── ConfirmModal.tsx    # Accessible confirmation dialogs
-│   │   ├── EmptyState.tsx      # Zero-state empty views
-│   │   ├── FloatingClockBubble.tsx # Draggable mini timer widget
-│   │   ├── GiftModal.tsx       # Workspace gift recipient modal
-│   │   ├── GiftSetupModal.tsx  # Workspace gift template creator
-│   │   ├── Header.tsx          # Application top navigation & actions
-│   │   ├── MetricsOverview.tsx # Analytical KPI summary cards
-│   │   ├── PastDateEntryModal.tsx # Manual historical timestamp entry
-│   │   ├── ProjectBadge.tsx    # Styled project tag pills
-│   │   ├── ProjectsModal.tsx   # Project & billing rate configuration
-│   │   ├── PunchClockCard.tsx  # Interactive punch clock card
-│   │   ├── QuarterWeeksModal.tsx # Fiscal quarter breakdown modal
-│   │   ├── RecentTable.tsx     # Recent sessions log table
-│   │   ├── SettingsModal.tsx   # General settings & Creator inbox
-│   │   ├── TimesheetDetailModal.tsx # Timesheet audit & inline editor
-│   │   ├── VisualCharts.tsx    # Interactive Recharts visualizations
-│   │   └── WidgetGuideModal.tsx # Desktop & widget setup instructions
-│   ├── utils/                  # Core domain logic and utilities
-│   │   ├── audio.ts            # Web Audio API chime synthesis
-│   │   ├── gmail.ts            # Gmail draft & compose link helpers
-│   │   ├── storage.ts          # Storage engine & server synchronization
-│   │   └── timeCalculations.ts # Timestamp math, rounding, and rollups
-│   ├── App.tsx                 # Root application shell
-│   ├── index.css               # Global CSS & Tailwind import
-│   ├── main.tsx                # Client DOM entry point
-│   ├── types.ts                # TypeScript interfaces and type definitions
-│   └── version.ts              # Semantic versioning config
-├── .env.example                # Template for environment variables
-├── index.html                  # HTML entry point with meta tags
-├── metadata.json               # Platform capabilities & app manifest
-├── package.json                # Project dependencies and npm scripts
-├── server.ts                   # Express server & API routes
-├── tsconfig.json               # TypeScript compiler configuration
-└── vite.config.ts              # Vite bundler configuration
+
+├── data/                             # Local JSON database storage
+│   ├── db.json                       # Primary application database
+│   ├── stats.json                    # Aggregated metrics cache
+│   └── suggestions.json              # Change requests & user feedback
+├── public/                           # Static public assets
+│   ├── icon.svg                      # Application vector icon
+│   ├── manifest.json                 # PWA Web Application Manifest
+│   └── sw.js                         # Service Worker for offline capability
+├── src/                              # Frontend source code
+│   ├── components/                   # Reusable UI component modules
+│   │   ├── AuthModal.tsx             # User sign-in & session setup
+│   │   ├── ConfirmModal.tsx          # Accessible confirmation dialogs
+│   │   ├── EmptyState.tsx            # Zero-state empty views
+│   │   ├── FloatingClockBubble.tsx   # Draggable mini timer widget
+│   │   ├── GiftModal.tsx             # Workspace gift recipient modal
+│   │   ├── GiftSetupModal.tsx        # Workspace gift template creator
+│   │   ├── Header.tsx                # Application top navigation & actions
+│   │   ├── MetricsOverview.tsx       # Analytical KPI summary cards
+│   │   ├── PastDateEntryModal.tsx    # Manual historical timestamp entry
+│   │   ├── ProjectBadge.tsx          # Styled project tag pills
+│   │   ├── ProjectsModal.tsx         # Project & billing rate configuration
+│   │   ├── PunchClockCard.tsx        # Interactive punch clock card
+│   │   ├── QuarterWeeksModal.tsx     # Fiscal quarter breakdown modal
+│   │   ├── RecentTable.tsx           # Recent sessions log table
+│   │   ├── SettingsModal.tsx         # General settings & Creator inbox
+│   │   ├── TimesheetDetailModal.tsx  # Timesheet audit & inline editor
+│   │   ├── VisualCharts.tsx          # Interactive Recharts visualizations
+│   │   └── WidgetGuideModal.tsx      # Desktop & widget setup instructions
+│   ├── utils/                        # Core domain logic and utilities
+│   │   ├── audio.ts                  # Web Audio API chime synthesis
+│   │   ├── gmail.ts                  # Gmail draft & compose link helpers
+│   │   ├── storage.ts                # Storage engine & server synchronization
+│   │   └── timeCalculations.ts       # Timestamp math, rounding, and rollups
+│   ├── App.tsx                       # Root application shell
+│   ├── index.css                     # Global CSS & Tailwind import
+│   ├── main.tsx                      # Client DOM entry point
+│   ├── types.ts                      # TypeScript interfaces and type definitions
+│   └── version.ts                    # Semantic versioning config
+├── .env.example                      # Template for environment variables
+├── index.html                        # HTML entry point with meta tags
+├── metadata.json                     # Platform capabilities & app manifest
+├── package.json                      # Project dependencies and npm scripts
+├── server.ts                         # Express server & API routes
+├── tsconfig.json                     # TypeScript compiler configuration
+└── vite.config.ts                    # Vite bundler configuration
+
 ```
 
 ---
@@ -199,24 +205,29 @@ Session Time Tracker utilizes a unified full-stack architecture pairing a fast R
 ### Installation
 
 1. Clone the repository to your local environment:
-   ```bash
-   git clone https://github.com/abel-reyes/session-time-tracker.git
-   cd session-time-tracker
-   ```
-
+```bash
+git clone [https://github.com/abel-reyes/session-time-tracker.git](https://github.com/abel-reyes/session-time-tracker.git)
+cd session-time-tracker
+```
 2. Install project dependencies:
-   ```bash
-   npm install
-   ```
+```bash
+npm install
+```
+
+
+
 
 ### Running in Development
 
 Start the development server (runs Express with integrated Vite middleware):
+
 ```bash
 npm run dev
+
 ```
 
 Open your browser and navigate to:
+
 ```
 http://localhost:3000
 ```
@@ -224,27 +235,35 @@ http://localhost:3000
 ### Building for Production
 
 Compile both the client-side single page app and the server-side TypeScript entry point:
+
 ```bash
 npm run build
+
 ```
 
 This generates:
-- `dist/` - Optimized static frontend assets (HTML, CSS, JS, manifest, service worker).
-- `dist/server.cjs` - Standalone CommonJS bundle of the server.
+
+* `dist/` - Optimized static frontend assets (HTML, CSS, JS, manifest, service worker).
+* `dist/server.cjs` - Standalone CommonJS bundle of the server.
 
 ### Running the Production Server
 
 To start the production server:
+
 ```bash
 npm start
+
 ```
+
 The application will listen on `http://0.0.0.0:3000`.
 
 ### Type-Checking & Linting
 
 Run TypeScript type-checking to verify there are no compilation errors:
+
 ```bash
 npm run lint
+
 ```
 
 ---
@@ -254,39 +273,46 @@ npm run lint
 The application is configured to run out-of-the-box with zero required external variables. If running in a hosted cloud environment (such as Google Cloud Run), you can customize the configuration:
 
 1. Copy `.env.example` to `.env`:
-   ```bash
-   cp .env.example .env
-   ```
+```bash
+cp .env.example .env
+
+```
+
 
 2. Available environment variables:
-   ```env
-   # Application URL (used for self-referential links and OAuth callbacks)
-   APP_URL=http://localhost:3000
+```env
+# Application URL (used for self-referential links and OAuth callbacks)
+APP_URL=http://localhost:3000
 
-   # Port configuration (Defaults to 3000)
-   PORT=3000
-   ```
+# Port configuration (Defaults to 3000)
+PORT=3000
+
+```
+
+
 
 ---
 
 ## Offline & PWA Support
 
 Session Time Tracker is configured as a **Progressive Web App**:
-- **Offline Reliability**: The custom Service Worker (`public/sw.js`) caches application assets so users can punch in and view logs even without an internet connection.
-- **Installable**: Meets modern Web App Manifest specifications (`public/manifest.json`), enabling an "Install App" prompt on supported browsers.
-- **Data Protection**: Changes made offline are committed to local persistent storage and seamlessly queued for server sync once connectivity returns.
+
+* **Offline Reliability**: The custom Service Worker (`public/sw.js`) caches application assets so users can punch in and view logs even without an internet connection.
+* **Installable**: Meets modern Web App Manifest specifications (`public/manifest.json`), enabling an "Install App" prompt on supported browsers.
+* **Data Protection**: Changes made offline are committed to local persistent storage and seamlessly queued for server sync once connectivity returns.
 
 ---
 
 ## Feedback & Change Requests
 
 The application features a built-in **Creator Feedback & Suggestion Queue** located directly inside the **Settings** modal:
-- Users can submit bug reports, UX enhancements, and feature requests.
-- Submissions generate a trackable ticket ID (e.g. `#CR-2026-001`) and route directly to the project maintainer.
-- Submissions include a convenient **"Open in Gmail"** 1-click option to pre-populate drafts with ticket details.
+
+* Users can submit bug reports, UX enhancements, and feature requests.
+* Submissions generate a trackable ticket ID (e.g. `#CR-2026-001`) and route directly to the project maintainer.
+* Submissions include a convenient **"Open in Gmail"** 1-click option to pre-populate drafts with ticket details.
 
 ---
 
 ## License
 
-This project is open source and available under the [MIT License](LICENSE).
+This project is open source and available under the [MIT License](https://www.google.com/search?q=LICENSE&utm_source=gemini).
