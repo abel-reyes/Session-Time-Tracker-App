@@ -42,7 +42,7 @@ A modern, high-precision session timestamp tracker and productivity analytics pl
 ### High-Precision Punch Clock
 - **Live Elapsed Timer**: Real-time ticker with smooth updates and millisecond precision.
 - **Indefinite Daily Sessions**: Track an unlimited number of punch-in / punch-out sessions throughout the day, dynamically expanding beyond traditional fixed daily punch limits.
-- **Overnight & Multi-Day Continuous Tracking**: Full native support for long-running sessions spanning past midnight or multi-day journeys (e.g., cross-country road trips or overnight shifts starting at 23:45 on 9/1 and ending at 12:20 on 9/3). The live stopwatch counts continuous uninterrupted elapsed time, while the intelligent partitioning engine automatically records daily segment allocations into timesheet records to maintain clean 24-hour daily math, streaks, and analytics.
+- **Overnight & Multi-Day Tracking**: Tracks sessions past midnight or across multiple days with a continuous live timer, automatically partitioning hours across calendar dates for accurate daily analytics.
 - **Retroactive Session Entry**: Add historical time logs with precise start and stop timestamps, custom calendar dates, and customizable session notes.
 - **Audio Feedback**: Subtle, synthesized Web Audio cues for punch-in, punch-out, and break transitions.
 
@@ -60,10 +60,10 @@ A modern, high-precision session timestamp tracker and productivity analytics pl
 ### Timesheet Detail & Auditing
 - **Granular Entry Inspector**: Edit start/end times, adjust assigned projects, and update work notes inline.
 - **Quarter-Weeks Modal**: Inspect individual work weeks within each fiscal quarter.
-- **Export Capabilities**: Export session histories cleanly to formatted **CSV** reports for spreadsheets, payroll, and reporting.
+- **Export Capabilities**: Export session histories cleanly to formatted **CSV** reports for spreadsheets and reporting.
 
 ### Persistent Mini-Timer Drawer
-- **Floating Clock Bubble**: A persistent, expandable bottom drawer widget that keeps your active timer, project switcher, and punch controls accessible across all views and analytics screens.
+- **Floating Clock Bubble**: A persistent, expandable bottom drawer widget that keeps your active timer, project switcher, and punch controls accessible across views and analytics screens.
 
 ### Blank Slate Gifting & Onboarding
 - **Workspace Gifting**: Export or provision pre-configured project templates and clean states for onboarding teammates.
@@ -106,7 +106,7 @@ Session Time Tracker utilizes a unified full-stack architecture pairing a fast R
 │   └──────────────────────┬──────────────────────────────┘   │
 │                          │                                  │
 │   ┌──────────────────────▼──────────────────────────────┐   │
-│   │ File-Based Durable Persistence (`data/*.json`)       │   │
+│   │ File-Based Durable Persistence (`data/*.json`)      │   │
 │   └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -139,51 +139,51 @@ Session Time Tracker utilizes a unified full-stack architecture pairing a fast R
 ## Project Directory Structure
 
 ```
-├── data/                       # Local JSON database storage
-│   ├── db.json                 # Primary application database
-│   ├── stats.json              # Aggregated metrics cache
-│   └── suggestions.json        # Change requests & user feedback
-├── public/                     # Static public assets
-│   ├── icon.svg                # Application vector icon
-│   ├── manifest.json           # PWA Web Application Manifest
-│   └── sw.js                   # Service Worker for offline capability
-├── src/                        # Frontend source code
-│   ├── components/             # Reusable UI component modules
-│   │   ├── AuthModal.tsx       # User sign-in & session setup
-│   │   ├── ConfirmModal.tsx    # Accessible confirmation dialogs
-│   │   ├── EmptyState.tsx      # Zero-state empty views
-│   │   ├── FloatingClockBubble.tsx # Persistent quick-clock drawer widget
-│   │   ├── GiftModal.tsx       # Workspace gift recipient modal
-│   │   ├── GiftSetupModal.tsx  # Workspace gift template creator
-│   │   ├── Header.tsx          # Application top navigation & actions
-│   │   ├── MetricsOverview.tsx # Analytical KPI summary cards
-│   │   ├── PastDateEntryModal.tsx # Manual historical timestamp entry
-│   │   ├── ProjectBadge.tsx    # Styled project tag pills
-│   │   ├── ProjectsModal.tsx   # Project categorization & color configuration
-│   │   ├── PunchClockCard.tsx  # Interactive punch clock card
-│   │   ├── QuarterWeeksModal.tsx # Fiscal quarter breakdown modal
-│   │   ├── RecentTable.tsx     # Recent sessions log table
-│   │   ├── SettingsModal.tsx   # General settings & Creator inbox
-│   │   ├── TimesheetDetailModal.tsx # Timesheet audit & inline editor
-│   │   ├── VisualCharts.tsx    # Interactive Recharts visualizations
-│   │   └── WidgetGuideModal.tsx # Desktop & widget setup instructions
-│   ├── utils/                  # Core domain logic and utilities
-│   │   ├── audio.ts            # Web Audio API chime synthesis
-│   │   ├── gmail.ts            # Gmail draft & compose link helpers
-│   │   ├── storage.ts          # Storage engine & server synchronization
-│   │   └── timeCalculations.ts # Timestamp math, rounding, and rollups
-│   ├── App.tsx                 # Root application shell
-│   ├── index.css               # Global CSS & Tailwind import
-│   ├── main.tsx                # Client DOM entry point
-│   ├── types.ts                # TypeScript interfaces and type definitions
-│   └── version.ts              # Semantic versioning config
-├── .env.example                # Template for environment variables
-├── index.html                  # HTML entry point with meta tags
-├── metadata.json               # Platform capabilities & app manifest
-├── package.json                # Project dependencies and npm scripts
-├── server.ts                   # Express server & API routes
-├── tsconfig.json               # TypeScript compiler configuration
-└── vite.config.ts              # Vite bundler configuration
+├── data/                               # Local JSON database storage
+│   ├── db.json                         # Primary application database
+│   ├── stats.json                      # Aggregated metrics cache
+│   └── suggestions.json                # Change requests & user feedback
+├── public/                             # Static public assets
+│   ├── icon.svg                        # Application vector icon
+│   ├── manifest.json                   # PWA Web Application Manifest
+│   └── sw.js                           # Service Worker for offline capability
+├── src/                                # Frontend source code
+│   ├── components/                     # Reusable UI component modules
+│   │   ├── AuthModal.tsx               # User sign-in & session setup
+│   │   ├── ConfirmModal.tsx            # Accessible confirmation dialogs
+│   │   ├── EmptyState.tsx              # Zero-state empty views
+│   │   ├── FloatingClockBubble.tsx     # Persistent quick-clock drawer widget
+│   │   ├── GiftModal.tsx               # Workspace gift recipient modal
+│   │   ├── GiftSetupModal.tsx          # Workspace gift template creator
+│   │   ├── Header.tsx                  # Application top navigation & actions
+│   │   ├── MetricsOverview.tsx         # Analytical KPI summary cards
+│   │   ├── PastDateEntryModal.tsx      # Manual historical timestamp entry
+│   │   ├── ProjectBadge.tsx            # Styled project tag pills
+│   │   ├── ProjectsModal.tsx           # Project categorization & color configuration
+│   │   ├── PunchClockCard.tsx          # Interactive punch clock card
+│   │   ├── QuarterWeeksModal.tsx       # Fiscal quarter breakdown modal
+│   │   ├── RecentTable.tsx             # Recent sessions log table
+│   │   ├── SettingsModal.tsx           # General settings & Creator inbox
+│   │   ├── TimesheetDetailModal.tsx    # Timesheet audit & inline editor
+│   │   ├── VisualCharts.tsx            # Interactive Recharts visualizations
+│   │   └── WidgetGuideModal.tsx        # Desktop & widget setup instructions
+│   ├── utils/                          # Core domain logic and utilities
+│   │   ├── audio.ts                    # Web Audio API chime synthesis
+│   │   ├── gmail.ts                    # Gmail draft & compose link helpers
+│   │   ├── storage.ts                  # Storage engine & server synchronization
+│   │   └── timeCalculations.ts         # Timestamp math, rounding, and rollups
+│   ├── App.tsx                         # Root application shell
+│   ├── index.css                       # Global CSS & Tailwind import
+│   ├── main.tsx                        # Client DOM entry point
+│   ├── types.ts                        # TypeScript interfaces and type definitions
+│   └── version.ts                      # Semantic versioning config
+├── .env.example                        # Template for environment variables
+├── index.html                          # HTML entry point with meta tags
+├── metadata.json                       # Platform capabilities & app manifest
+├── package.json                        # Project dependencies and npm scripts
+├── server.ts                           # Express server & API routes
+├── tsconfig.json                       # TypeScript compiler configuration
+└── vite.config.ts                      # Vite bundler configuration
 ```
 
 ---
@@ -198,15 +198,15 @@ Session Time Tracker utilizes a unified full-stack architecture pairing a fast R
 ### Installation
 
 1. Clone the repository to your local environment:
-   ```bash
-   git clone https://github.com/your-username/session-time-tracker.git
-   cd session-time-tracker
-   ```
+```bash
+git clone https://github.com/your-username/session-time-tracker.git
+cd session-time-tracker
+```
 
 2. Install project dependencies:
-   ```bash
-   npm install
-   ```
+```bash
+npm install
+```
 
 ### Running in Development
 
