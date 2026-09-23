@@ -1,6 +1,6 @@
-# Session Time Tracker ⏱️
+# Session Time Tracker
 
-🚀 **[View Live Demo](https://sessiontime-tracker.ai.studio/)**
+**[View Live Demo](https://sessiontime-tracker.ai.studio/)**
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue.svg?logo=typescript)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19.0-61dafb.svg?logo=react)](https://react.dev/)
@@ -13,7 +13,7 @@ A modern, high-precision session timestamp tracker and productivity analytics pl
 
 ---
 
-## 📑 Table of Contents
+## Table of Contents
 
 - [Project Overview](#project-overview)
 - [Key Features](#key-features)
@@ -33,49 +33,49 @@ A modern, high-precision session timestamp tracker and productivity analytics pl
 
 ---
 
-## 🌟 Project Overview
+## Project Overview
 
 **Session Time Tracker** eliminates timesheet guesswork by combining real-time clock tracking with deep retrospective analytics. Whether tracking billable project hours, reviewing weekly averages across months and quarters, or entering past session logs, the app delivers a fluid, responsive, and reliable experience across desktop and mobile devices.
 
 ---
 
-## ✨ Key Features
+## Key Features
 
-### ⏱️ High-Precision Punch Clock
+### High-Precision Punch Clock
 - **Live Elapsed Timer**: Real-time ticker with smooth updates and millisecond precision.
 - **Indefinite Sessions & Pause/Resume**: Pause active sessions for breaks without splitting context.
 - **Retroactive Session Entry**: Add historical time logs with precise start and stop timestamps and customizable session notes.
 - **Audio Feedback**: Subtle, synthesized Web Audio cues for punch-in, punch-out, and break transitions.
 
-### 📁 Multi-Project Allocation & Rates
+### Multi-Project Allocation & Rates
 - **Color-Coded Projects**: Categorize time entries across client and internal projects.
 - **Billable Rates & Budgets**: Configure hourly rates and project caps to monitor budget burn in real time.
 - **Quick Project Badges**: Rapid switching and filtering across project tags.
 
-### 📊 Analytics & Visual Reporting
+### Analytics & Visual Reporting
 - **Metric Cards**: Instant calculations for Today, This Week, This Month, and Year-to-Date hours.
 - **Weekly & Quarterly Rollups**: View average weekly hours broken down by month and fiscal quarter.
 - **Interactive Visual Charts**: Powered by Recharts—visualize distribution across projects, daily trends, and hourly density.
 - **Celebration Triggers**: Integrated confetti celebration animations upon hitting milestone targets.
 
-### 🔍 Timesheet Detail & Auditing
+### Timesheet Detail & Auditing
 - **Granular Entry Inspector**: Edit start/end times, adjust assigned projects, and update work notes inline.
 - **Quarter-Weeks Modal**: Inspect individual work weeks within each fiscal quarter.
 - **Export Capabilities**: Export session histories cleanly to formatted **CSV** or **Markdown** reports.
 
-### 🪟 Floating Mini-Timer (Picture-in-Picture)
+### Floating Mini-Timer (Picture-in-Picture)
 - **Floating Clock Bubble**: Detachable, draggable mini timer overlay that persists across views, allowing time tracking while navigating deep reports.
 
-### 🎁 Blank Slate Gifting & Onboarding
+### Blank Slate Gifting & Onboarding
 - **Workspace Gifting**: Export or provision pre-configured project templates and clean states for onboarding teammates.
 
-### 📱 Offline-First & Cross-Device Sync
+### Offline-First & Cross-Device Sync
 - **PWA Ready**: Installable to desktop, tablet, and mobile home screens with offline caching via Service Workers.
 - **Hybrid Storage Engine**: Instant optimistic updates stored in browser storage (`localStorage`), backed by server-side synchronization endpoints.
 
 ---
 
-## 🏗️ Technical Architecture
+## Technical Architecture
 
 Session Time Tracker utilizes a unified full-stack architecture pairing a fast React 19 client with a lightweight Express server.
 
@@ -117,7 +117,7 @@ Session Time Tracker utilizes a unified full-stack architecture pairing a fast R
 
 ---
 
-## 💻 Tech Stack
+## Tech Stack
 
 ### Frontend
 - **Framework**: [React 19](https://react.dev/)
@@ -137,7 +137,7 @@ Session Time Tracker utilizes a unified full-stack architecture pairing a fast R
 
 ---
 
-## 📁 Project Directory Structure
+## Project Directory Structure
 
 ```
 ├── data/                       # Local JSON database storage
@@ -189,7 +189,7 @@ Session Time Tracker utilizes a unified full-stack architecture pairing a fast R
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -249,7 +249,7 @@ npm run lint
 
 ---
 
-## ⚙️ Environment Configuration
+## Environment Configuration
 
 The application is configured to run out-of-the-box with zero required external variables. If running in a hosted cloud environment (such as Google Cloud Run), you can customize the configuration:
 
@@ -269,7 +269,7 @@ The application is configured to run out-of-the-box with zero required external 
 
 ---
 
-## 📶 Offline & PWA Support
+## Offline & PWA Support
 
 Session Time Tracker is configured as a **Progressive Web App**:
 - **Offline Reliability**: The custom Service Worker (`public/sw.js`) caches application assets so users can punch in and view logs even without an internet connection.
@@ -278,7 +278,7 @@ Session Time Tracker is configured as a **Progressive Web App**:
 
 ---
 
-## 📬 Feedback & Change Requests
+## Feedback & Change Requests
 
 The application features a built-in **Creator Feedback & Suggestion Queue** located directly inside the **Settings** modal:
 - Users can submit bug reports, UX enhancements, and feature requests.
@@ -287,6 +287,6 @@ The application features a built-in **Creator Feedback & Suggestion Queue** loca
 
 ---
 
-## 📄 License
+## License
 
 This project is open source and available under the [MIT License](LICENSE).
