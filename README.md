@@ -43,14 +43,14 @@ A modern, high-precision session timestamp tracker and productivity analytics pl
 
 ### High-Precision Punch Clock
 - **Live Elapsed Timer**: Real-time ticker with smooth updates and millisecond precision.
-- **Indefinite Sessions & Pause/Resume**: Pause active sessions for breaks without splitting context.
+- **Unlimited Sessions Per Day**: Track an indefinite number of punch-in / punch-out sessions throughout the day, dynamically expanding beyond traditional fixed daily punch limits.
 - **Retroactive Session Entry**: Add historical time logs with precise start and stop timestamps and customizable session notes.
 - **Audio Feedback**: Subtle, synthesized Web Audio cues for punch-in, punch-out, and break transitions.
 
-### Multi-Project Allocation & Rates
-- **Color-Coded Projects**: Categorize time entries across client and internal projects.
-- **Billable Rates & Budgets**: Configure hourly rates and project caps to monitor budget burn in real time.
-- **Quick Project Badges**: Rapid switching and filtering across project tags.
+### Multi-Project Organization & Categorization
+- **Color-Coded Projects**: Categorize time entries across client and internal projects with custom color tags.
+- **Project Filtering**: Filter timesheet logs and metrics by specific projects to evaluate focused effort.
+- **Quick Project Badges**: Rapid switching and assigning active sessions directly from the clock interface.
 
 ### Analytics & Visual Reporting
 - **Metric Cards**: Instant calculations for Today, This Week, This Month, and Year-to-Date hours.
@@ -61,10 +61,10 @@ A modern, high-precision session timestamp tracker and productivity analytics pl
 ### Timesheet Detail & Auditing
 - **Granular Entry Inspector**: Edit start/end times, adjust assigned projects, and update work notes inline.
 - **Quarter-Weeks Modal**: Inspect individual work weeks within each fiscal quarter.
-- **Export Capabilities**: Export session histories cleanly to formatted **CSV** or **Markdown** reports.
+- **Export Capabilities**: Export session histories cleanly to formatted **CSV** reports for spreadsheets, and reporting.
 
-### Floating Mini-Timer (Picture-in-Picture)
-- **Floating Clock Bubble**: Detachable, draggable mini timer overlay that persists across views, allowing time tracking while navigating deep reports.
+### Persistent Mini-Timer Drawer
+- **Floating Clock Bubble**: A persistent, expandable bottom drawer widget that keeps your active timer, project switcher, and punch controls accessible across views and analytics screens.
 
 ### Blank Slate Gifting & Onboarding
 - **Workspace Gifting**: Export or provision pre-configured project templates and clean states for onboarding teammates.
