@@ -190,14 +190,40 @@ export function PastDateEntryModal({
   };
 
   const handleRemoveSession = (index: number) => {
+    const targetPunch = currentPunches[index];
     const updated = currentPunches.filter((_, i) => i !== index);
     setCurrentPunches(updated);
+
+    // Save update to current record immediately
+    const cleanPunches = updated.filter((p) => Boolean(p.inTime?.trim() || p.outTime?.trim()));
+    onSaveDayRecord({
+      date: selectedDate,
+      punches: cleanPunches,
+      notes: dayNotes.trim() || undefined,
+    });
+
+    // If punch was part of a linked multi-day session, also clean up linked segments across other records
+    if (targetPunch?.sessionId && onSaveMultipleRecords) {
+      const recordsToUpdate: DayRecord[] = [];
+      records.forEach((r) => {
+        if (r.date !== selectedDate && r.punches?.some((p) => p.sessionId === targetPunch.sessionId)) {
+          recordsToUpdate.push({
+            ...r,
+            punches: r.punches.filter((p) => p.sessionId !== targetPunch.sessionId),
+          });
+        }
+      });
+      if (recordsToUpdate.length > 0) {
+        onSaveMultipleRecords(recordsToUpdate);
+      }
+    }
   };
 
   const handleSaveAll = () => {
+    const cleanPunches = currentPunches.filter((p) => Boolean(p.inTime?.trim() || p.outTime?.trim()));
     const recordToSave: DayRecord = {
       date: selectedDate,
-      punches: currentPunches.length > 0 ? currentPunches : [{ inTime: '', outTime: '' }],
+      punches: cleanPunches,
       notes: dayNotes.trim() || undefined,
     };
 

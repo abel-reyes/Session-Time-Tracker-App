@@ -18,7 +18,7 @@ import {
   Upload,
   ChevronDown
 } from 'lucide-react';
-import { Project, DayRecord } from '../types';
+import { Project, DayRecord, PunchPair } from '../types';
 import { 
   formatSecondsToHuman, 
   formatSecondsToHHMMSS, 
@@ -35,6 +35,7 @@ interface ProjectsModalProps {
   projects: Project[];
   records: DayRecord[];
   onSaveProjects: (projects: Project[]) => void;
+  onSaveRecords?: (records: DayRecord[]) => void;
   onSelectProjectForSession?: (projectId: string) => void;
   themeColor?: string;
   secondaryColor?: string;
@@ -61,6 +62,7 @@ export function ProjectsModal({
   projects,
   records,
   onSaveProjects,
+  onSaveRecords,
   onSelectProjectForSession,
   themeColor = '#059669',
   secondaryColor = '#0F172A',
@@ -73,9 +75,18 @@ export function ProjectsModal({
   // Form State
   const [name, setName] = useState<string>('');
   const [client, setClient] = useState<string>('');
+  const [billableRate, setBillableRate] = useState<string>('');
   const [color, setColor] = useState<string>(PRESET_COLORS[0]);
   const [description, setDescription] = useState<string>('');
   const [isCsvMenuOpen, setIsCsvMenuOpen] = useState<boolean>(false);
+
+  // Log Punch Editing State
+  const [editingLogId, setEditingLogId] = useState<string | null>(null);
+  const [editLogDate, setEditLogDate] = useState<string>('');
+  const [editLogInTime, setEditLogInTime] = useState<string>('');
+  const [editLogOutTime, setEditLogOutTime] = useState<string>('');
+  const [editLogProjectId, setEditLogProjectId] = useState<string>('');
+  const [editLogNote, setEditLogNote] = useState<string>('');
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -85,7 +96,10 @@ export function ProjectsModal({
   const projectStats = projects.map((p) => {
     let totalSec = 0;
     const sessionLogs: {
+      id: string;
       date: string;
+      punchIndex: number;
+      punch: PunchPair;
       inTime?: string;
       outTime?: string;
       durationSec: number;
@@ -93,7 +107,7 @@ export function ProjectsModal({
     }[] = [];
 
     records.forEach((r) => {
-      (r.punches || []).forEach((punch) => {
+      (r.punches || []).forEach((punch, pIdx) => {
         if (punch.projectId === p.id || punch.projectName === p.name) {
           let dur = 0;
           if (punch.inTime && punch.outTime) {
@@ -105,7 +119,10 @@ export function ProjectsModal({
           }
           totalSec += dur;
           sessionLogs.push({
+            id: `${r.date}-${pIdx}-${punch.inTime || 'open'}`,
             date: r.date,
+            punchIndex: pIdx,
+            punch,
             inTime: punch.inTime,
             outTime: punch.outTime,
             durationSec: dur,
@@ -133,6 +150,7 @@ export function ProjectsModal({
   const handleStartCreate = () => {
     setName('');
     setClient('');
+    setBillableRate('');
     setColor(PRESET_COLORS[Math.floor(Math.random() * PRESET_COLORS.length)]);
     setDescription('');
     setIsCreating(true);
@@ -142,6 +160,7 @@ export function ProjectsModal({
   const handleStartEdit = (p: Project) => {
     setName(p.name);
     setClient(p.client || '');
+    setBillableRate(p.billableRate !== undefined && p.billableRate !== null ? String(p.billableRate) : '');
     setColor(p.color || PRESET_COLORS[0]);
     setDescription(p.description || '');
     setEditingProjectId(p.id);
@@ -155,12 +174,16 @@ export function ProjectsModal({
       return;
     }
 
+    const parsedRate = billableRate.trim() ? parseFloat(billableRate) : undefined;
+    const validRate = parsedRate !== undefined && !isNaN(parsedRate) && parsedRate >= 0 ? parsedRate : undefined;
+
     if (isCreating) {
       const nowIso = new Date().toISOString();
       const newProj: Project = {
         id: `proj-${Date.now()}`,
         name: name.trim(),
         client: client.trim() || undefined,
+        billableRate: validRate,
         color,
         description: description.trim() || undefined,
         createdAt: nowIso,
@@ -178,6 +201,7 @@ export function ProjectsModal({
               ...p,
               name: name.trim(),
               client: client.trim() || undefined,
+              billableRate: validRate,
               color,
               description: description.trim() || undefined,
               updatedAt: nowIso,
@@ -187,6 +211,113 @@ export function ProjectsModal({
       onSaveProjects(updated);
       setEditingProjectId(null);
     }
+  };
+
+  // Session Log Punch Editing Handlers within Projects Modal
+  const handleStartEditPunch = (log: {
+    id: string;
+    date: string;
+    punchIndex: number;
+    punch: PunchPair;
+    inTime?: string;
+    outTime?: string;
+    note?: string;
+  }) => {
+    setEditingLogId(log.id);
+    setEditLogDate(log.date);
+    setEditLogInTime(log.inTime ? log.inTime.substring(0, 8) : '');
+    setEditLogOutTime(log.outTime ? log.outTime.substring(0, 8) : '');
+    setEditLogProjectId(log.punch.projectId || selectedProjectId || '');
+    setEditLogNote(log.note || '');
+  };
+
+  const handleCancelEditPunch = () => {
+    setEditingLogId(null);
+  };
+
+  const handleSavePunchEdit = (log: {
+    date: string;
+    punchIndex: number;
+    punch: PunchPair;
+  }) => {
+    if (!onSaveRecords) return;
+    const updated = [...records];
+    const oldRecIdx = updated.findIndex((r) => r.date === log.date);
+    if (oldRecIdx === -1) return;
+
+    let formattedIn = editLogInTime.trim();
+    if (formattedIn.length === 5) formattedIn += ':00';
+    let formattedOut = editLogOutTime.trim();
+    if (formattedOut.length === 5) formattedOut += ':00';
+
+    const targetProj = projects.find((p) => p.id === editLogProjectId);
+    const updatedPunch: PunchPair = {
+      ...log.punch,
+      inDate: editLogDate,
+      inTime: formattedIn,
+      outDate: editLogDate,
+      outTime: formattedOut,
+      projectId: targetProj ? targetProj.id : undefined,
+      projectName: targetProj ? targetProj.name : undefined,
+      note: editLogNote.trim() || undefined,
+    };
+
+    if (editLogDate === log.date) {
+      // Same date: update in place
+      const oldRec = { ...updated[oldRecIdx] };
+      const punchesCopy = [...(oldRec.punches || [])];
+      punchesCopy[log.punchIndex] = updatedPunch;
+      oldRec.punches = punchesCopy;
+      updated[oldRecIdx] = oldRec;
+    } else {
+      // Date changed: remove from old date, insert into new date
+      const oldRec = { ...updated[oldRecIdx] };
+      oldRec.punches = (oldRec.punches || []).filter((_, idx) => idx !== log.punchIndex);
+      updated[oldRecIdx] = oldRec;
+
+      const newRecIdx = updated.findIndex((r) => r.date === editLogDate);
+      if (newRecIdx >= 0) {
+        const newRec = { ...updated[newRecIdx] };
+        newRec.punches = [...(newRec.punches || []), updatedPunch];
+        updated[newRecIdx] = newRec;
+      } else {
+        updated.push({
+          date: editLogDate,
+          punches: [updatedPunch],
+        });
+      }
+      updated.sort((a, b) => a.date.localeCompare(b.date));
+    }
+
+    onSaveRecords(updated);
+    setEditingLogId(null);
+  };
+
+  const handleDeletePunch = (log: {
+    date: string;
+    punchIndex: number;
+    punch: PunchPair;
+    inTime?: string;
+    outTime?: string;
+  }) => {
+    if (!onSaveRecords) return;
+    setConfirmDialog({
+      title: 'Delete Recorded Punch?',
+      message: `Are you sure you want to delete this punch session on ${formatDateMMDDYYYY(log.date)}${log.inTime ? ` (${formatTime24to12(log.inTime)} – ${log.outTime ? formatTime24to12(log.outTime) : 'Open'})` : ''}? This will remove the punch from timesheets and immediately update project statistics.`,
+      confirmText: 'Delete Punch',
+      variant: 'danger',
+      onConfirm: () => {
+        const updated = [...records];
+        const recIdx = updated.findIndex((r) => r.date === log.date);
+        if (recIdx >= 0) {
+          const targetRec = { ...updated[recIdx] };
+          targetRec.punches = (targetRec.punches || []).filter((_, idx) => idx !== log.punchIndex);
+          updated[recIdx] = targetRec;
+          onSaveRecords(updated);
+          setEditingLogId(null);
+        }
+      },
+    });
   };
 
   const handleDeleteProject = (projId: string) => {
@@ -221,27 +352,30 @@ export function ProjectsModal({
     const activeProjects = projects.filter((p) => !p.isDeleted);
     const rows = [
       '# PROJECTS_SECTION',
-      '# Project Name,Client,Color Hex,Description,Project ID',
+      '# Project Name,Client,Billable Rate,Color Hex,Description,Project ID',
     ];
     for (const p of activeProjects) {
       const nameSafe = (p.name || '').replace(/"/g, '""');
       const clientSafe = (p.client || '').replace(/"/g, '""');
+      const rateSafe = p.billableRate !== undefined && p.billableRate !== null ? String(p.billableRate) : '';
       const colorSafe = (p.color || '#0284C7').replace(/"/g, '""');
       const descSafe = (p.description || '').replace(/"/g, '""');
       const idSafe = (p.id || '').replace(/"/g, '""');
-      rows.push(`# "${nameSafe}","${clientSafe}","${colorSafe}","${descSafe}","${idSafe}"`);
+      rows.push(`# "${nameSafe}","${clientSafe}","${rateSafe}","${colorSafe}","${descSafe}","${idSafe}"`);
     }
     rows.push('# END_PROJECTS_SECTION');
     rows.push('');
-    rows.push('Project Name,Client,Color,Description,Total Hours,Total Sessions');
+    rows.push('Project Name,Client,Billable Rate ($/hr),Color,Description,Total Hours,Total Sessions,Billable Total ($)');
     for (const ps of projectStats) {
       if (ps.project.isDeleted) continue;
       const p = ps.project;
       const nameSafe = (p.name || '').replace(/"/g, '""');
       const clientSafe = (p.client || '').replace(/"/g, '""');
+      const rateSafe = p.billableRate !== undefined && p.billableRate !== null ? String(p.billableRate) : '';
       const colorSafe = (p.color || '').replace(/"/g, '""');
       const descSafe = (p.description || '').replace(/"/g, '""');
-      rows.push(`"${nameSafe}","${clientSafe}","${colorSafe}","${descSafe}",${ps.totalHours},${ps.sessionCount}`);
+      const billableTot = p.billableRate && p.billableRate > 0 ? ((ps.totalSeconds / 3600) * p.billableRate).toFixed(2) : '';
+      rows.push(`"${nameSafe}","${clientSafe}","${rateSafe}","${colorSafe}","${descSafe}",${ps.totalHours},${ps.sessionCount},"${billableTot}"`);
     }
 
     const csvContent = rows.join('\n');
@@ -466,6 +600,25 @@ export function ProjectsModal({
                     onChange={(e) => setClient(e.target.value)}
                     className="w-full px-3.5 py-2 text-xs rounded-lg border border-slate-300 focus:outline-slate-900 shadow-2xs"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Billable Rate (Optional)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="0.00 / hr"
+                      value={billableRate}
+                      onChange={(e) => setBillableRate(e.target.value)}
+                      className="w-full pl-7 pr-12 py-2 text-xs rounded-lg border border-slate-300 focus:outline-slate-900 shadow-2xs font-mono font-medium"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-medium">/ hr</span>
+                  </div>
                 </div>
 
                 {/* Project Color Customizer with Wheel, Hex, and Swatches */}
@@ -742,6 +895,25 @@ export function ProjectsModal({
                   />
                 </div>
 
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Billable Rate (Optional)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="0.00 / hr"
+                      value={billableRate}
+                      onChange={(e) => setBillableRate(e.target.value)}
+                      className="w-full pl-7 pr-12 py-2 text-xs rounded-lg border border-slate-300 focus:outline-slate-900 font-mono font-medium"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-medium">/ hr</span>
+                  </div>
+                </div>
+
                 {/* Project Color Customizer with Wheel, Hex, and Swatches */}
                 <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5">
                   <div className="flex items-center justify-between">
@@ -872,14 +1044,25 @@ export function ProjectsModal({
 
                 {/* Metrics Highlights */}
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="p-3 rounded-xl bg-white border border-slate-200">
-                    <div className="text-[10px] font-bold uppercase text-slate-400">Total Project Time</div>
-                    <div className="text-lg font-extrabold font-mono text-indigo-950">
-                      {formatSecondsToHHMMSS(activeStats.totalSeconds)}
+                  <div className="p-3 rounded-xl bg-white border border-slate-200 flex flex-col justify-between">
+                    <div>
+                      <div className="text-[10px] font-bold uppercase text-slate-400">Total Project Time</div>
+                      <div className="text-lg font-extrabold font-mono text-indigo-950">
+                        {formatSecondsToHHMMSS(activeStats.totalSeconds)}
+                      </div>
                     </div>
-                    <div className="text-[11px] text-slate-500 font-medium mt-0.5">
-                      {formatSecondsToHuman(activeStats.totalSeconds)}
-                    </div>
+                    {activeStats.project.billableRate && activeStats.project.billableRate > 0 ? (
+                      <div className="text-[12px] font-bold font-mono text-emerald-700 mt-1 flex items-center gap-1.5">
+                        <span>
+                          ${((activeStats.totalSeconds / 3600) * activeStats.project.billableRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-normal">
+                          (${activeStats.project.billableRate.toFixed(2)}/hr)
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="h-4 mt-1" />
+                    )}
                   </div>
 
                   <div className="p-3 rounded-xl bg-white border border-slate-200">
@@ -914,38 +1097,169 @@ export function ProjectsModal({
                         compact
                       />
                     ) : (
-                      activeStats.logs.map((log, lIdx) => (
-                        <div
-                          key={lIdx}
-                          className="p-3 rounded-xl bg-slate-50/90 border border-slate-200/90 text-xs space-y-1 hover:bg-slate-50 transition-colors shadow-2xs"
-                        >
-                          {/* Line 1: Date */}
-                          <div className="font-bold text-slate-900 font-mono flex items-center gap-1.5 text-xs">
-                            <Calendar className="w-3.5 h-3.5 text-slate-500" />
-                            <span>{formatDateMMDDYYYY(log.date)}</span>
-                          </div>
+                      activeStats.logs.map((log) => {
+                        const isEditingThisPunch = editingLogId === log.id;
 
-                          {/* Line 2: Start - Stop Times (Duration) */}
-                          <div className="text-[11.5px] font-mono text-slate-700 font-medium flex items-center gap-1.5">
-                            <Clock className="w-3 h-3 text-slate-400 shrink-0" />
-                            <span>
-                              {log.inTime && log.outTime
-                                ? `${formatTime24to12(log.inTime)} – ${formatTime24to12(log.outTime)} (${formatSecondsToHuman(log.durationSec)})`
-                                : log.inTime
-                                ? `${formatTime24to12(log.inTime)} – In Progress (Active)`
-                                : 'Open Shift'}
-                            </span>
-                          </div>
+                        if (isEditingThisPunch) {
+                          return (
+                            <div
+                              key={log.id}
+                              className="p-3.5 rounded-xl bg-white border-2 border-indigo-300 shadow-sm text-xs space-y-3"
+                            >
+                              <div className="flex items-center justify-between pb-1.5 border-b border-slate-100">
+                                <span className="font-bold text-indigo-900 text-xs flex items-center gap-1.5">
+                                  <Edit3 className="w-3.5 h-3.5 text-indigo-600" />
+                                  Edit Punch Session
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSavePunchEdit(log)}
+                                    className="px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs inline-flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                                    title="Save changes"
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                    <span>Save</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={handleCancelEditPunch}
+                                    className="px-2 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold text-xs inline-flex items-center gap-1 cursor-pointer transition-colors"
+                                    title="Cancel"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
 
-                          {/* Line 3: Notes / Annotation (only if they exist) */}
-                          {log.note && log.note.trim().length > 0 && (
-                            <div className="pt-1 mt-1 border-t border-slate-200/70 text-slate-700 text-xs flex items-baseline gap-1.5 leading-relaxed">
-                              <span className="font-bold shrink-0 select-none" style={{ color: themeColor }}>•</span>
-                              <span className="break-words font-normal">{log.note.trim()}</span>
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                <div>
+                                  <label className="block text-[10px] font-bold uppercase text-slate-500 mb-0.5">
+                                    Date
+                                  </label>
+                                  <input
+                                    type="date"
+                                    value={editLogDate}
+                                    onChange={(e) => setEditLogDate(e.target.value)}
+                                    className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md font-mono"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="block text-[10px] font-bold uppercase text-slate-500 mb-0.5">
+                                    Clock In Time
+                                  </label>
+                                  <input
+                                    type="time"
+                                    step="1"
+                                    value={editLogInTime}
+                                    onChange={(e) => setEditLogInTime(e.target.value)}
+                                    className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md font-mono text-emerald-800 font-semibold"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="block text-[10px] font-bold uppercase text-slate-500 mb-0.5">
+                                    Clock Out Time
+                                  </label>
+                                  <input
+                                    type="time"
+                                    step="1"
+                                    value={editLogOutTime}
+                                    onChange={(e) => setEditLogOutTime(e.target.value)}
+                                    className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md font-mono text-rose-800 font-semibold"
+                                  />
+                                </div>
+                              </div>
+
+                              <div>
+                                <label className="block text-[10px] font-bold uppercase text-slate-500 mb-0.5">
+                                  Assigned Project
+                                </label>
+                                <select
+                                  value={editLogProjectId}
+                                  onChange={(e) => setEditLogProjectId(e.target.value)}
+                                  className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md bg-white font-medium text-slate-800 cursor-pointer"
+                                >
+                                  {projects.filter((p) => !p.isDeleted).map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                      {p.name} {p.client ? `(${p.client})` : ''}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div>
+                                <label className="block text-[10px] font-bold uppercase text-slate-500 mb-0.5">
+                                  Notes & Accomplished Objectives
+                                </label>
+                                <textarea
+                                  rows={2}
+                                  value={editLogNote}
+                                  onChange={(e) => setEditLogNote(e.target.value)}
+                                  placeholder="Add notes, tasks accomplished, or deliverables..."
+                                  className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-md"
+                                />
+                              </div>
                             </div>
-                          )}
-                        </div>
-                      ))
+                          );
+                        }
+
+                        return (
+                          <div
+                            key={log.id}
+                            className="p-3 rounded-xl bg-slate-50/90 border border-slate-200/90 text-xs space-y-1.5 hover:bg-slate-50 transition-colors shadow-2xs group"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              {/* Left: Date */}
+                              <div className="font-bold text-slate-900 font-mono flex items-center gap-1.5 text-xs">
+                                <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                                <span>{formatDateMMDDYYYY(log.date)}</span>
+                              </div>
+
+                              {/* Right: Edit & Remove Action Buttons */}
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEditPunch(log)}
+                                  className="p-1 rounded-md text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
+                                  title="Edit this punch session"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeletePunch(log)}
+                                  className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                  title="Delete this punch session"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Line 2: Start - Stop Times (Duration) */}
+                            <div className="text-[11.5px] font-mono text-slate-700 font-medium flex items-center gap-1.5">
+                              <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                              <span>
+                                {log.inTime && log.outTime
+                                  ? `${formatTime24to12(log.inTime)} – ${formatTime24to12(log.outTime)} (${formatSecondsToHuman(log.durationSec)})`
+                                  : log.inTime
+                                  ? `${formatTime24to12(log.inTime)} – In Progress (Active)`
+                                  : 'Open Shift'}
+                              </span>
+                            </div>
+
+                            {/* Line 3: Notes / Annotation (only if they exist) */}
+                            {log.note && log.note.trim().length > 0 && (
+                              <div className="pt-1 mt-1 border-t border-slate-200/70 text-slate-700 text-xs flex items-baseline gap-1.5 leading-relaxed">
+                                <span className="font-bold shrink-0 select-none" style={{ color: themeColor }}>•</span>
+                                <span className="break-words font-normal">{log.note.trim()}</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
                     )}
                   </div>
                 </div>

@@ -48,7 +48,9 @@ A modern, high-precision session timestamp tracker and productivity analytics pl
 
 ### Multi-Project Organization & Categorization
 - **Color-Coded Projects**: Categorize time entries across client and internal projects with custom color tags.
-- **Project Filtering**: Filter timesheet logs and metrics by specific projects to evaluate focused effort.
+- **Billable Rates & Freelancer Invoicing**: Assign optional hourly billable rates per project to compute billable sums and client totals in real time.
+- **Project Filtering & Objectives**: Filter timesheet logs and metrics by specific projects to evaluate focused effort and monitor accomplished objectives.
+- **Punch Session Management**: Inspect, edit, reassign, or remove recorded session pairs directly from project detail logs and timesheet auditors.
 - **Quick Project Badges**: Rapid switching and assigning active sessions directly from the clock interface.
 
 ### Analytics & Visual Reporting

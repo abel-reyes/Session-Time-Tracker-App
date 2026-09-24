@@ -261,7 +261,7 @@ export function QuarterWeeksModal({
     const avgHoursPerActiveDay = activeDays > 0 ? Number((selectedWeek.totalHours / activeDays).toFixed(1)) : 0;
 
     // Project breakdown for this week
-    const projectTimeMap = new Map<string, { name: string; seconds: number; color?: string }>();
+    const projectTimeMap = new Map<string, { name: string; seconds: number; color?: string; projectId?: string }>();
     let totalPunchedSeconds = 0;
     let totalSessionCount = 0;
 
@@ -273,21 +273,36 @@ export function QuarterWeeksModal({
           totalPunchedSeconds += pSec;
           const pName = p.projectName && p.projectName.trim() !== '' ? p.projectName.trim() : 'General / Standard';
           const pColor = getProjectColor(p.projectId, p.projectName);
-          const existing = projectTimeMap.get(pName) || { name: pName, seconds: 0, color: pColor };
+          const existing = projectTimeMap.get(pName) || { name: pName, seconds: 0, color: pColor, projectId: p.projectId };
           existing.seconds += pSec;
+          if (p.projectId && !existing.projectId) existing.projectId = p.projectId;
           projectTimeMap.set(pName, existing);
         }
       });
     });
 
+    let weekBillableTotal = 0;
     const projectBreakdown = Array.from(projectTimeMap.values())
-      .map((proj) => ({
-        name: proj.name,
-        seconds: proj.seconds,
-        color: proj.color || '#64748b',
-        hours: Number((proj.seconds / 3600).toFixed(1)),
-        percent: selectedWeek.totalSeconds > 0 ? Math.round((proj.seconds / selectedWeek.totalSeconds) * 100) : 0,
-      }))
+      .map((proj) => {
+        const matchedProj = projects.find(
+          (pr) => pr.id === proj.projectId || pr.name.toLowerCase().trim() === proj.name.toLowerCase().trim()
+        );
+        const billableRate = matchedProj?.billableRate;
+        const hours = Number((proj.seconds / 3600).toFixed(1));
+        const billableAmount = billableRate && billableRate > 0 ? (proj.seconds / 3600) * billableRate : 0;
+        weekBillableTotal += billableAmount;
+
+        return {
+          name: proj.name,
+          client: matchedProj?.client,
+          seconds: proj.seconds,
+          color: proj.color || '#64748b',
+          hours,
+          billableRate,
+          billableAmount,
+          percent: selectedWeek.totalSeconds > 0 ? Math.round((proj.seconds / selectedWeek.totalSeconds) * 100) : 0,
+        };
+      })
       .sort((a, b) => b.seconds - a.seconds);
 
     // Collect all notes
@@ -323,6 +338,7 @@ export function QuarterWeeksModal({
       totalSessionCount,
       projectBreakdown,
       allNotes,
+      weekBillableTotal: Number(weekBillableTotal.toFixed(2)),
       vsAvgPct,
     };
   }, [selectedWeek, recordMap, avgWeeklyHours, projects]);
@@ -456,7 +472,7 @@ export function QuarterWeeksModal({
               {/* 1. Total */}
               <div className="bg-white p-2.5 rounded-xl border border-slate-200/70 shadow-2xs">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                  Total
+                  Total Hours
                 </span>
                 <div className="flex items-baseline gap-1 mt-0.5">
                   <span className="text-lg sm:text-xl font-extrabold text-slate-900 font-mono">
@@ -468,6 +484,11 @@ export function QuarterWeeksModal({
                   <span className="font-mono text-slate-400">
                     {formatSecondsToHHMMSS(selectedWeek.totalSeconds)}
                   </span>
+                  {selectedWeekDetails.weekBillableTotal > 0 && (
+                    <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded" title="Total project billable amount">
+                      ${selectedWeekDetails.weekBillableTotal.toFixed(2)}
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -570,9 +591,15 @@ export function QuarterWeeksModal({
                           <span className="font-bold font-mono text-slate-900 block">
                             {proj.hours}h
                           </span>
-                          <span className="text-[10px] font-semibold" style={{ color: themeColor }}>
-                            {proj.percent}%
-                          </span>
+                          {proj.billableRate && proj.billableRate > 0 ? (
+                            <span className="text-[10.5px] font-bold font-mono text-emerald-700 block">
+                              ${proj.billableAmount?.toFixed(2)}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-semibold" style={{ color: themeColor }}>
+                              {proj.percent}%
+                            </span>
+                          )}
                         </div>
                       </div>
                     ))}

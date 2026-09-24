@@ -5,7 +5,8 @@ import {
   Flame, 
   Target,
   BarChart2,
-  TrendingUp
+  TrendingUp,
+  DollarSign
 } from 'lucide-react';
 import { DashboardMetrics, AppSettings, DayRecord, Project } from '../types';
 import { 
@@ -13,8 +14,10 @@ import {
   formatSecondsToHuman, 
   getTodayMondayDate, 
   formatWeekRangeShort,
+  formatDateToYYYYMMDD,
   getQuarterWeeksBreakdown,
-  getQuarterName
+  getQuarterName,
+  calculateDateRangeBillable
 } from '../utils/timeCalculations';
 import { QuarterWeeksModal } from './QuarterWeeksModal';
 
@@ -51,6 +54,23 @@ export function MetricsOverview({
 
   const currentMonday = useMemo(() => getTodayMondayDate(), []);
   const currentWeekRangeStr = useMemo(() => formatWeekRangeShort(currentMonday), [currentMonday]);
+  const currentMondayStr = useMemo(() => formatDateToYYYYMMDD(currentMonday), [currentMonday]);
+  const currentSundayStr = useMemo(() => {
+    const sun = new Date(currentMonday);
+    sun.setDate(currentMonday.getDate() + 6);
+    return formatDateToYYYYMMDD(sun);
+  }, [currentMonday]);
+
+  // Project-isolated weekly billable total
+  const weeklyBillable = useMemo(() => {
+    return calculateDateRangeBillable(
+      records,
+      projects,
+      currentMondayStr,
+      currentSundayStr,
+      liveExtraSeconds
+    );
+  }, [records, projects, currentMondayStr, currentSundayStr, liveExtraSeconds]);
 
   // Compute breakdown of all weeks of the quarter for the modal
   const quarterWeeks = useMemo(() => {
@@ -198,6 +218,21 @@ export function MetricsOverview({
                 {metrics.currentStreak} Day Streak
               </span>
               <span className="text-[11px] text-slate-400">Continuous log</span>
+            </div>
+          )}
+
+          {/* Project-Isolated Billable Total */}
+          {weeklyBillable.hasBillableProjects && weeklyBillable.totalBillableAmount > 0 && (
+            <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+              <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1.5">
+                <span className="uppercase tracking-wider text-[10px] text-slate-400">Billable:</span>
+                <span className="font-mono text-emerald-700 font-bold bg-emerald-50 border border-emerald-200/80 px-1.5 py-0.5 rounded shadow-2xs">
+                  ${weeklyBillable.totalBillableAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </span>
+              <span className="text-[10px] text-slate-400 font-mono">
+                {weeklyBillable.totalBillableHours}h across {weeklyBillable.items.length} {weeklyBillable.items.length === 1 ? 'project' : 'projects'}
+              </span>
             </div>
           )}
         </div>

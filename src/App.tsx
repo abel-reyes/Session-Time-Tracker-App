@@ -1346,6 +1346,7 @@ export default function App() {
         projects={projects}
         records={records}
         onSaveProjects={handleSaveProjects}
+        onSaveRecords={handleSaveTimesheetRecords}
         themeColor={settings.themeColor || '#0284C7'}
         secondaryColor={settings.chartColor || '#0F172A'}
       />

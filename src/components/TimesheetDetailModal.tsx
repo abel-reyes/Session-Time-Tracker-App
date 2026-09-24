@@ -113,9 +113,28 @@ export function TimesheetDetailModal({
     });
   };
 
+  const handleRemovePunchSlot = (slotIdx: number) => {
+    if (!editForm) return;
+    const punchesCopy = [...(editForm.punches || [])];
+    punchesCopy.splice(slotIdx, 1);
+    setEditForm({
+      ...editForm,
+      punches: punchesCopy.length > 0 ? punchesCopy : [{ inTime: '', outTime: '', note: '' }],
+    });
+  };
+
   const handleSaveEdit = () => {
     if (!editForm) return;
-    const updated = records.map((r) => (r.date === editForm.date ? editForm : r));
+    // Clean up empty punches so ghost blank pairs are removed
+    const cleanPunches = (editForm.punches || []).filter(
+      (p) => Boolean(p.inTime && p.inTime.trim() !== '') || Boolean(p.outTime && p.outTime.trim() !== '')
+    );
+    const updatedRecord: DayRecord = {
+      ...editForm,
+      punches: cleanPunches,
+      notes: editForm.notes?.trim() || undefined,
+    };
+    const updated = records.map((r) => (r.date === editForm.date ? updatedRecord : r));
     onSaveRecords(updated);
     setEditingDate(null);
     setEditForm(null);
@@ -480,18 +499,30 @@ export function TimesheetDetailModal({
                               {/* Out Time */}
                               <td className="py-1 px-1.5 border-r border-slate-200 text-center font-mono">
                                 {isEditing && editForm ? (
-                                  <input
-                                    type="text"
-                                    placeholder="HH:mm:ss"
-                                    value={editForm.punches[slotIdx]?.outTime || ''}
-                                    onChange={(e) => {
-                                      const copy = { ...editForm };
-                                      if (!copy.punches[slotIdx]) copy.punches[slotIdx] = { inTime: '', outTime: '', note: '' };
-                                      copy.punches[slotIdx].outTime = e.target.value;
-                                      setEditForm(copy);
-                                    }}
-                                    className="w-18 px-1 py-0.5 text-center text-xs border border-emerald-300 rounded-md bg-white focus:outline-emerald-600 font-mono"
-                                  />
+                                  <div className="flex items-center gap-1 justify-center">
+                                    <input
+                                      type="text"
+                                      placeholder="HH:mm:ss"
+                                      value={editForm.punches[slotIdx]?.outTime || ''}
+                                      onChange={(e) => {
+                                        const copy = { ...editForm };
+                                        if (!copy.punches[slotIdx]) copy.punches[slotIdx] = { inTime: '', outTime: '', note: '' };
+                                        copy.punches[slotIdx].outTime = e.target.value;
+                                        setEditForm(copy);
+                                      }}
+                                      className="w-16 px-1 py-0.5 text-center text-xs border border-emerald-300 rounded-md bg-white focus:outline-emerald-600 font-mono"
+                                    />
+                                    {editForm.punches.length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemovePunchSlot(slotIdx)}
+                                        className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                        title={`Remove session #${slotIdx + 1}`}
+                                      >
+                                        <Trash2 className="w-3 h-3 text-rose-500" />
+                                      </button>
+                                    )}
+                                  </div>
                                 ) : (
                                   <span className={pair?.outTime ? 'text-rose-800 font-medium' : 'text-slate-300'}>
                                     {pair?.outTime || '—'}

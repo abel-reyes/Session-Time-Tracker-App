@@ -774,14 +774,32 @@ export function parseCSVToRecordsAndProjects(csvText: string, existingProjects: 
       if (pCols.length >= 1 && pCols[0]) {
         const pName = pCols[0];
         const pClient = pCols[1] || undefined;
-        const pColor = pCols[2] && pCols[2].startsWith('#') ? pCols[2] : '#0284C7';
-        const pDesc = pCols[3] || undefined;
-        const pId = pCols[4] || `proj-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+        let pRate: number | undefined = undefined;
+        let pColor = '#0284C7';
+        let pDesc: string | undefined = undefined;
+        let pId = `proj-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+
+        // Check if format is: Name, Client, Billable Rate, Color, Desc, ID
+        if (pCols[2] && !isNaN(Number(pCols[2])) && pCols[3] && pCols[3].startsWith('#')) {
+          pRate = Number(pCols[2]);
+          pColor = pCols[3];
+          pDesc = pCols[4] || undefined;
+          pId = pCols[5] || pId;
+        } else {
+          // Standard format: Name, Client, Color, Desc, ID, [Billable Rate]
+          pColor = pCols[2] && pCols[2].startsWith('#') ? pCols[2] : '#0284C7';
+          pDesc = pCols[3] || undefined;
+          pId = pCols[4] || pId;
+          if (pCols[5] && !isNaN(Number(pCols[5]))) {
+            pRate = Number(pCols[5]);
+          }
+        }
 
         parsedProjects.push({
           id: pId,
           name: pName,
           client: pClient,
+          billableRate: pRate !== undefined && pRate >= 0 ? pRate : undefined,
           color: pColor,
           description: pDesc,
           createdAt: new Date().toISOString(),
@@ -1027,5 +1045,101 @@ export function getQuarterWeeksBreakdown(
   }
 
   return summaries;
+}
+
+export interface ProjectBillableItem {
+  projectId: string;
+  projectName: string;
+  client?: string;
+  color: string;
+  billableRate: number;
+  totalSeconds: number;
+  totalHours: number;
+  billableAmount: number;
+}
+
+export interface WeeklyBillableSummary {
+  totalBillableAmount: number;
+  totalBillableHours: number;
+  hasBillableProjects: boolean;
+  items: ProjectBillableItem[];
+}
+
+/**
+ * Calculates project-specific billable earnings for a given date range (e.g. current week).
+ * Ensures rates are strictly and accurately calculated only to their respective projects.
+ */
+export function calculateDateRangeBillable(
+  records: DayRecord[],
+  projects: Project[],
+  startDateStr: string,
+  endDateStr: string,
+  liveExtraSeconds: number = 0,
+  liveProjectId?: string
+): WeeklyBillableSummary {
+  const projMap = new Map<string, Project>();
+  projects.forEach((p) => {
+    projMap.set(p.id, p);
+    projMap.set(p.name.toLowerCase().trim(), p);
+  });
+
+  const totalsByProjId = new Map<string, { seconds: number; project: Project }>();
+
+  records.forEach((rec) => {
+    if (rec.date >= startDateStr && rec.date <= endDateStr && rec.punches) {
+      rec.punches.forEach((p) => {
+        let sec = 0;
+        if (p.inTime && p.outTime) {
+          sec = getDurationInSeconds(p.inTime, p.outTime, p.inDate, p.outDate);
+        }
+        if (sec > 0) {
+          const proj = (p.projectId && projMap.get(p.projectId)) ||
+            (p.projectName && projMap.get(p.projectName.toLowerCase().trim()));
+          if (proj && proj.billableRate && proj.billableRate > 0) {
+            const current = totalsByProjId.get(proj.id) || { seconds: 0, project: proj };
+            current.seconds += sec;
+            totalsByProjId.set(proj.id, current);
+          }
+        }
+      });
+    }
+  });
+
+  if (liveExtraSeconds > 0 && liveProjectId) {
+    const proj = projMap.get(liveProjectId);
+    if (proj && proj.billableRate && proj.billableRate > 0) {
+      const current = totalsByProjId.get(proj.id) || { seconds: 0, project: proj };
+      current.seconds += liveExtraSeconds;
+      totalsByProjId.set(proj.id, current);
+    }
+  }
+
+  const items: ProjectBillableItem[] = [];
+  let totalBillableAmount = 0;
+  let totalBillableSeconds = 0;
+
+  totalsByProjId.forEach(({ seconds, project }) => {
+    const hours = seconds / 3600;
+    const amount = hours * (project.billableRate || 0);
+    totalBillableAmount += amount;
+    totalBillableSeconds += seconds;
+    items.push({
+      projectId: project.id,
+      projectName: project.name,
+      client: project.client,
+      color: project.color,
+      billableRate: project.billableRate || 0,
+      totalSeconds: seconds,
+      totalHours: Number(hours.toFixed(2)),
+      billableAmount: Number(amount.toFixed(2)),
+    });
+  });
+
+  return {
+    totalBillableAmount: Number(totalBillableAmount.toFixed(2)),
+    totalBillableHours: Number((totalBillableSeconds / 3600).toFixed(2)),
+    hasBillableProjects: items.length > 0,
+    items: items.sort((a, b) => b.billableAmount - a.billableAmount),
+  };
 }
 

@@ -2,6 +2,7 @@ export interface Project {
   id: string;
   name: string;
   client?: string;
+  billableRate?: number; // Optional hourly rate (e.g. 75 for $75.00/hr)
   color: string; // Hex color (e.g. #059669, #2563eb, #8b5cf6, #d97706, #ec4899)
   description?: string;
   createdAt: string;
