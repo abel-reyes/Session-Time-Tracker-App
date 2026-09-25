@@ -20,8 +20,11 @@ import {
   formatSecondsToHuman,
   formatSecondsToHHMMSS,
   calculateDayTotalSeconds,
-  splitMultiDaySession
+  splitMultiDaySession,
+  deleteSessionFromRecords,
+  generateSessionId
 } from '../utils/timeCalculations';
+import { recordDeletedSession } from '../utils/storage';
 import { ProjectBadge } from './ProjectBadge';
 
 interface PastDateEntryModalProps {
@@ -32,6 +35,7 @@ interface PastDateEntryModalProps {
   projects?: Project[];
   onSaveDayRecord: (updatedRecord: DayRecord) => void;
   onSaveMultipleRecords?: (records: DayRecord[]) => void;
+  onDeleteSession?: (dateStr: string, punch: PunchPair, punchIndex?: number) => void;
   themeColor?: string;
   secondaryColor?: string;
 }
@@ -44,6 +48,7 @@ export function PastDateEntryModal({
   projects = [],
   onSaveDayRecord,
   onSaveMultipleRecords,
+  onDeleteSession,
   themeColor = '#0284C7',
   secondaryColor = '#0F172A',
 }: PastDateEntryModalProps) {
@@ -179,6 +184,7 @@ export function PastDateEntryModal({
           inTime: formattedIn,
           outDate: selectedDate,
           outTime: formattedOut,
+          sessionId: generateSessionId(),
           projectId: newProjectId || undefined,
           projectName: matchProj?.name,
           note: newNote.trim() || undefined,
@@ -191,30 +197,29 @@ export function PastDateEntryModal({
 
   const handleRemoveSession = (index: number) => {
     const targetPunch = currentPunches[index];
+    if (!targetPunch) return;
+
+    // Record deletion tombstone
+    recordDeletedSession(targetPunch, selectedDate);
+
+    // Optimistically update local state
     const updated = currentPunches.filter((_, i) => i !== index);
     setCurrentPunches(updated);
 
-    // Save update to current record immediately
-    const cleanPunches = updated.filter((p) => Boolean(p.inTime?.trim() || p.outTime?.trim()));
-    onSaveDayRecord({
-      date: selectedDate,
-      punches: cleanPunches,
-      notes: dayNotes.trim() || undefined,
-    });
-
-    // If punch was part of a linked multi-day session, also clean up linked segments across other records
-    if (targetPunch?.sessionId && onSaveMultipleRecords) {
-      const recordsToUpdate: DayRecord[] = [];
-      records.forEach((r) => {
-        if (r.date !== selectedDate && r.punches?.some((p) => p.sessionId === targetPunch.sessionId)) {
-          recordsToUpdate.push({
-            ...r,
-            punches: r.punches.filter((p) => p.sessionId !== targetPunch.sessionId),
-          });
-        }
-      });
-      if (recordsToUpdate.length > 0) {
-        onSaveMultipleRecords(recordsToUpdate);
+    if (onDeleteSession) {
+      onDeleteSession(selectedDate, targetPunch, index);
+    } else {
+      const allUpdated = deleteSessionFromRecords(records, selectedDate, targetPunch, index);
+      if (onSaveMultipleRecords) {
+        onSaveMultipleRecords(allUpdated);
+      } else {
+        const cleanPunches = updated.filter((p) => Boolean(p.inTime?.trim() || p.outTime?.trim()));
+        onSaveDayRecord({
+          date: selectedDate,
+          punches: cleanPunches,
+          notes: dayNotes.trim() || undefined,
+          updatedAt: new Date().toISOString(),
+        });
       }
     }
   };

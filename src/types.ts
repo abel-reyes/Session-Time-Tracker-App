@@ -34,6 +34,12 @@ export interface DayRecord {
   punches: PunchPair[];
   notes?: string;
   primaryProjectId?: string;
+  updatedAt?: string; // ISO timestamp for conflict-free sync
+}
+
+export interface SyncTombstones {
+  sessionIds: Record<string, string>; // sessionId or multiDaySig -> deletedAt ISO string
+  dates: Record<string, string>;      // dateStr -> deletedAt ISO string
 }
 
 export interface QuarterData {

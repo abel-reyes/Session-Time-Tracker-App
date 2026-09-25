@@ -223,6 +223,161 @@ export function splitMultiDaySession(
   return segments;
 }
 
+/**
+ * Normalizes time strings (e.g. "09:00" -> "09:00:00") for reliable equality checks.
+ */
+export function normalizeTimeStr(t?: string | null): string {
+  if (!t) return '';
+  const trimmed = t.trim();
+  if (trimmed.length === 5) return `${trimmed}:00`;
+  return trimmed;
+}
+
+/**
+ * Generates a unique session ID for linking or tracking individual/multi-day sessions.
+ */
+export function generateSessionId(): string {
+  return `sess_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+}
+
+/**
+ * Deletes a session from records. If the session is part of an overnight or multi-day journey
+ * (linked via sessionId, isMultiDaySegment, totalSessionSeconds, or multi-day note signature),
+ * it automatically and atomically deletes ALL segments belonging to that multi-day session
+ * across all dates.
+ * If it is a single-day session, it deletes only that session from the target date.
+ * Stamps any modified day record with a fresh updatedAt ISO timestamp so cloud sync updates correctly.
+ */
+export function deleteSessionFromRecords(
+  records: DayRecord[],
+  targetDate: string,
+  targetPunch: PunchPair,
+  targetPunchIndex?: number
+): DayRecord[] {
+  const sessionId = targetPunch.sessionId?.trim();
+
+  // Detect multi-day session indicators
+  const partMatch = targetPunch.note?.match(/\[Part\s*(\d+)\/(\d+)\]/i);
+  const totalParts = partMatch ? parseInt(partMatch[2], 10) : targetPunch.totalSegments;
+  const baseNote = targetPunch.note ? targetPunch.note.replace(/\[Part\s*\d+\/\d+\]/gi, '').trim() : '';
+  
+  const multiDayMatch = targetPunch.note?.match(/Multi-day session:\s*([^\[]+)/i);
+  const multiDaySig = multiDayMatch ? multiDayMatch[1].trim() : null;
+
+  const isMultiDay = Boolean(
+    targetPunch.isMultiDaySegment ||
+    (sessionId && sessionId !== '') ||
+    (totalParts && totalParts > 1) ||
+    multiDaySig ||
+    (targetPunch.inDate && targetPunch.outDate && targetPunch.inDate !== targetPunch.outDate)
+  );
+
+  let singlePunchDeleted = false;
+  const nowIso = new Date().toISOString();
+
+  const mapped = records.map((rec) => {
+    if (!rec.punches || !Array.isArray(rec.punches)) return rec;
+
+    const originalCount = rec.punches.length;
+    const remainingPunches = rec.punches.filter((p, pIdx) => {
+      // 1. Multi-Day Session Deletion: purge all segments belonging to this multi-day session
+      if (isMultiDay) {
+        // Match by unique sessionId
+        if (sessionId && p.sessionId && p.sessionId === sessionId) {
+          return false;
+        }
+
+        // Match by multi-day text signature in notes
+        if (multiDaySig && p.note && p.note.includes(multiDaySig)) {
+          return false;
+        }
+
+        // Match by part pattern and identical base note
+        if (totalParts && totalParts > 1 && (p.isMultiDaySegment || p.note?.match(/\[Part\s*\d+\/\d+\]/i))) {
+          const pPartMatch = p.note?.match(/\[Part\s*(\d+)\/(\d+)\]/i);
+          if (pPartMatch && parseInt(pPartMatch[2], 10) === totalParts) {
+            const pBaseNote = p.note ? p.note.replace(/\[Part\s*\d+\/\d+\]/gi, '').trim() : '';
+            if (pBaseNote === baseNote || !baseNote || !pBaseNote) {
+              return false;
+            }
+          }
+        }
+
+        // Match by totalSessionSeconds and isMultiDaySegment flag
+        if (
+          targetPunch.totalSessionSeconds &&
+          targetPunch.totalSessionSeconds > 0 &&
+          p.totalSessionSeconds === targetPunch.totalSessionSeconds &&
+          (p.isMultiDaySegment || p.note?.includes('[Part '))
+        ) {
+          return false;
+        }
+
+        // Match across dates if explicit inDate and outDate match
+        if (
+          targetPunch.inDate && targetPunch.outDate && targetPunch.inDate !== targetPunch.outDate &&
+          p.inDate === targetPunch.inDate && p.outDate === targetPunch.outDate
+        ) {
+          return false;
+        }
+      }
+
+      // 2. Single-Day Session Deletion on target date
+      if (rec.date === targetDate && !singlePunchDeleted) {
+        // Direct reference match
+        if (p === targetPunch) {
+          singlePunchDeleted = true;
+          return false;
+        }
+
+        // Session ID match if present
+        if (sessionId && p.sessionId && p.sessionId === sessionId) {
+          singlePunchDeleted = true;
+          return false;
+        }
+
+        // Exact index match if provided
+        if (targetPunchIndex !== undefined && pIdx === targetPunchIndex) {
+          singlePunchDeleted = true;
+          return false;
+        }
+
+        // Normalized time and metadata match
+        const normInP = normalizeTimeStr(p.inTime);
+        const normInTarget = normalizeTimeStr(targetPunch.inTime);
+        const normOutP = normalizeTimeStr(p.outTime);
+        const normOutTarget = normalizeTimeStr(targetPunch.outTime);
+
+        if (
+          normInP === normInTarget &&
+          normOutP === normOutTarget &&
+          (p.projectId || '') === (targetPunch.projectId || '')
+        ) {
+          singlePunchDeleted = true;
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    const isRecordModified = remainingPunches.length !== originalCount;
+
+    return {
+      ...rec,
+      punches: remainingPunches,
+      updatedAt: isRecordModified ? nowIso : (rec.updatedAt || nowIso),
+    };
+  });
+
+  // Prune empty ghost records that have 0 punches and no notes
+  return mapped.filter((r) => {
+    const hasPunches = r.punches && r.punches.length > 0;
+    const hasNotes = Boolean(r.notes && r.notes.trim().length > 0);
+    return hasPunches || hasNotes;
+  });
+}
+
 export function formatSecondsToHHMMSS(totalSeconds: number): string {
   const safe = Math.max(0, Math.floor(totalSeconds));
   const h = Math.floor(safe / 3600);
@@ -402,17 +557,19 @@ export function calculateMetrics(
     }
 
     const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    recentList.push({
-      date: record.date,
-      dayOfWeek: dayNames[dateObj.getDay()],
-      lastIn,
-      lastOut,
-      punchCount,
-      totalSeconds: daySec,
-      totalFormatted: formatSecondsToHHMMSS(daySec),
-      projectNames: Array.from(projectNamesUsed),
-      notes: record.notes,
-    });
+    if (daySec > 0 || punchCount > 0 || (record.notes && record.notes.trim().length > 0)) {
+      recentList.push({
+        date: record.date,
+        dayOfWeek: dayNames[dateObj.getDay()],
+        lastIn,
+        lastOut,
+        punchCount,
+        totalSeconds: daySec,
+        totalFormatted: formatSecondsToHHMMSS(daySec),
+        projectNames: Array.from(projectNamesUsed),
+        notes: record.notes,
+      });
+    }
   }
 
   // Calculate Streak

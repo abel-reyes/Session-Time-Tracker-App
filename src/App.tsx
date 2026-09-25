@@ -68,6 +68,8 @@ import {
   getActiveElapsedSeconds,
   splitMultiDaySession,
   generateQuarterCSV,
+  deleteSessionFromRecords,
+  generateSessionId,
 } from './utils/timeCalculations';
 import {
   loadSettings,
@@ -87,7 +89,9 @@ import {
   hasUserMadeRealPunches,
   seedSampleData,
   SAMPLE_PROJECTS,
-  recordDeviceVisit
+  recordDeviceVisit,
+  recordDeletedSession,
+  recordDeletedDate,
 } from './utils/storage';
 import {
   playPunchInSound,
@@ -228,13 +232,14 @@ export default function App() {
       if (res.success) {
         setSyncStatus('synced');
         setLastSyncedAt(new Date().toISOString());
+        reloadQuarterData();
       } else {
         setSyncStatus('idle');
       }
     } catch {
       setSyncStatus('error');
     }
-  }, [settings.userEmail]);
+  }, [settings.userEmail, reloadQuarterData]);
 
   // Cross-Tab Sync (Same Device): listen for changes made in other tabs or 1-tap launcher icons
   useEffect(() => {
@@ -531,6 +536,8 @@ export default function App() {
         return;
       }
 
+      const newSessionId = generateSessionId();
+
       let recIdx = updatedRecords.findIndex((r) => r.date === targetDate);
       if (recIdx === -1) {
         const newRecord: DayRecord = {
@@ -540,6 +547,7 @@ export default function App() {
               inDate: targetDate,
               inTime: targetTime, 
               outTime: '', 
+              sessionId: newSessionId,
               projectId: activeProj?.id,
               projectName: activeProj?.name,
               note: note || undefined
@@ -557,6 +565,7 @@ export default function App() {
             punches[i].inDate = targetDate;
             punches[i].inTime = targetTime;
             punches[i].outTime = '';
+            punches[i].sessionId = punches[i].sessionId || newSessionId;
             punches[i].projectId = activeProj?.id;
             punches[i].projectName = activeProj?.name;
             if (note) punches[i].note = note;
@@ -570,6 +579,7 @@ export default function App() {
             inDate: targetDate,
             inTime: targetTime, 
             outTime: '',
+            sessionId: newSessionId,
             projectId: activeProj?.id,
             projectName: activeProj?.name,
             note: note || undefined
@@ -776,62 +786,131 @@ export default function App() {
   };
 
   const handleSaveTimesheetRecords = (updated: DayRecord[]) => {
-    saveQuarterData(activeQuarter, updated);
-    setRecords(updated);
+    const nowIso = new Date().toISOString();
+    const stamped = updated.map((r) => ({ ...r, updatedAt: r.updatedAt || nowIso }));
+    saveQuarterData(activeQuarter, stamped);
+    setRecords(stamped);
     triggerAutoSync();
     if (settings.soundEnabled) playSuccessChime();
   };
 
   const handleSaveDayRecord = (record: DayRecord) => {
-    const updated = [...records];
-    const idx = updated.findIndex((r) => r.date === record.date);
-    if (idx >= 0) {
-      updated[idx] = record;
-    } else {
-      updated.push(record);
-    }
-    saveQuarterData(activeQuarter, updated);
-    setRecords(updated);
-    triggerAutoSync();
+    const nowIso = new Date().toISOString();
+    const stamped = { ...record, updatedAt: nowIso };
+    setRecords((prev) => {
+      const updated = [...prev];
+      const idx = updated.findIndex((r) => r.date === record.date);
+      if (idx >= 0) {
+        updated[idx] = stamped;
+      } else {
+        updated.push(stamped);
+      }
+      saveQuarterData(activeQuarter, updated);
+      triggerAutoSync();
+      return updated;
+    });
     if (settings.soundEnabled) playSuccessChime();
   };
 
   const handleSaveMultipleRecords = (recordsToSave: DayRecord[]) => {
-    const updated = [...records];
-    for (const rec of recordsToSave) {
-      const idx = updated.findIndex((r) => r.date === rec.date);
-      if (idx >= 0) {
-        updated[idx] = rec;
-      } else {
-        updated.push(rec);
+    const nowIso = new Date().toISOString();
+    setRecords((prev) => {
+      const updated = [...prev];
+      for (const rec of recordsToSave) {
+        const stamped = { ...rec, updatedAt: nowIso };
+        const idx = updated.findIndex((r) => r.date === rec.date);
+        if (idx >= 0) {
+          updated[idx] = stamped;
+        } else {
+          updated.push(stamped);
+        }
       }
-    }
-    updated.sort((a, b) => a.date.localeCompare(b.date));
-    saveQuarterData(activeQuarter, updated);
-    setRecords(updated);
-    triggerAutoSync();
+      updated.sort((a, b) => a.date.localeCompare(b.date));
+      saveQuarterData(activeQuarter, updated);
+      triggerAutoSync();
+      return updated;
+    });
     if (settings.soundEnabled) playSuccessChime();
   };
 
   const handleUpdateTodaySessions = (updatedPunches: PunchPair[]) => {
-    const updated = [...records];
-    const idx = updated.findIndex((r) => r.date === todayStr);
-    if (idx >= 0) {
-      updated[idx] = {
-        ...updated[idx],
-        punches: updatedPunches,
-      };
-    } else {
-      updated.push({
-        date: todayStr,
-        punches: updatedPunches,
-      });
-    }
-    saveQuarterData(activeQuarter, updated);
-    setRecords(updated);
-    triggerAutoSync();
+    const nowIso = new Date().toISOString();
+    setRecords((prev) => {
+      const updated = [...prev];
+      const idx = updated.findIndex((r) => r.date === todayStr);
+      if (idx >= 0) {
+        updated[idx] = {
+          ...updated[idx],
+          punches: updatedPunches,
+          updatedAt: nowIso,
+        };
+      } else {
+        updated.push({
+          date: todayStr,
+          punches: updatedPunches,
+          updatedAt: nowIso,
+        });
+      }
+      saveQuarterData(activeQuarter, updated);
+      triggerAutoSync();
+      return updated;
+    });
     if (settings.soundEnabled) playSuccessChime();
   };
+
+  // Comprehensive, atomic session deletion supporting both single-day and multi-day sessions
+  const handleDeleteSession = useCallback((dateStr: string, punch: PunchPair, punchIndex?: number) => {
+    // Record tombstones for this punch session and any multi-day identifiers
+    recordDeletedSession(punch, dateStr);
+
+    setRecords((prevRecords) => {
+      const updated = deleteSessionFromRecords(prevRecords, dateStr, punch, punchIndex);
+      saveQuarterData(activeQuarter, updated);
+      triggerAutoSync();
+      return updated;
+    });
+    if (settings.soundEnabled) playSuccessChime();
+    setStatusMessage({
+      text: punch.isMultiDaySegment || punch.sessionId
+        ? 'Multi-day session removed across all dates and synced.'
+        : 'Session removed successfully and synced.',
+      isError: false,
+    });
+  }, [activeQuarter, triggerAutoSync, settings.soundEnabled]);
+
+  // Cancel / discard an in-progress active Clock In session
+  const handleDiscardActiveSession = useCallback(() => {
+    const nowIso = new Date().toISOString();
+    setRecords((prev) => {
+      const updated = [...prev];
+      let found = false;
+      for (let r = updated.length - 1; r >= 0; r--) {
+        const rec = updated[r];
+        if (rec.punches && Array.isArray(rec.punches)) {
+          const target = rec.punches.find((p) => p.inTime && (!p.outTime || p.outTime.trim() === ''));
+          if (target) {
+            recordDeletedSession(target, rec.date);
+          }
+          const remaining = rec.punches.filter((p) => !(p.inTime && (!p.outTime || p.outTime.trim() === '')));
+          if (remaining.length !== rec.punches.length) {
+            updated[r] = { ...rec, punches: remaining, updatedAt: nowIso };
+            found = true;
+            break;
+          }
+        }
+      }
+      if (found) {
+        saveQuarterData(activeQuarter, updated);
+        triggerAutoSync();
+        if (settings.soundEnabled) playPunchOutSound();
+        setStatusMessage({
+          text: 'Active session discarded and deleted.',
+          isError: false,
+        });
+      }
+      return updated;
+    });
+  }, [activeQuarter, triggerAutoSync, settings.soundEnabled]);
 
   const handleSaveSettings = (updated: AppSettings) => {
     setSettings(updated);
@@ -1418,6 +1497,7 @@ export default function App() {
         projects={projects}
         onSaveDayRecord={handleSaveDayRecord}
         onSaveMultipleRecords={handleSaveMultipleRecords}
+        onDeleteSession={handleDeleteSession}
         themeColor={settings.themeColor || '#0284C7'}
         secondaryColor={settings.chartColor || '#0F172A'}
       />

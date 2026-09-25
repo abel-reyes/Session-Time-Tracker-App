@@ -24,8 +24,11 @@ import {
   formatSecondsToHHMMSS, 
   formatDateMMDDYYYY, 
   formatTime24to12,
-  parseCSVToRecordsAndProjects
+  getDurationInSeconds,
+  parseCSVToRecordsAndProjects,
+  deleteSessionFromRecords
 } from '../utils/timeCalculations';
+import { recordDeletedSession } from '../utils/storage';
 import { ConfirmModal, ConfirmDialogOptions } from './ConfirmModal';
 import { EmptyState } from './EmptyState';
 
@@ -111,11 +114,7 @@ export function ProjectsModal({
         if (punch.projectId === p.id || punch.projectName === p.name) {
           let dur = 0;
           if (punch.inTime && punch.outTime) {
-            const inParts = punch.inTime.split(':').map(Number);
-            const outParts = punch.outTime.split(':').map(Number);
-            const inSec = (inParts[0] || 0) * 3600 + (inParts[1] || 0) * 60 + (inParts[2] || 0);
-            const outSec = (outParts[0] || 0) * 3600 + (outParts[1] || 0) * 60 + (outParts[2] || 0);
-            dur = Math.max(0, outSec - inSec);
+            dur = getDurationInSeconds(punch.inTime, punch.outTime, punch.inDate, punch.outDate);
           }
           totalSec += dur;
           sessionLogs.push({
@@ -307,15 +306,10 @@ export function ProjectsModal({
       confirmText: 'Delete Punch',
       variant: 'danger',
       onConfirm: () => {
-        const updated = [...records];
-        const recIdx = updated.findIndex((r) => r.date === log.date);
-        if (recIdx >= 0) {
-          const targetRec = { ...updated[recIdx] };
-          targetRec.punches = (targetRec.punches || []).filter((_, idx) => idx !== log.punchIndex);
-          updated[recIdx] = targetRec;
-          onSaveRecords(updated);
-          setEditingLogId(null);
-        }
+        recordDeletedSession(log.punch, log.date);
+        const updated = deleteSessionFromRecords(records, log.date, log.punch, log.punchIndex);
+        onSaveRecords(updated);
+        setEditingLogId(null);
       },
     });
   };

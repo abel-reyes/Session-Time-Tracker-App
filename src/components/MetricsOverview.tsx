@@ -6,7 +6,8 @@ import {
   Target,
   BarChart2,
   TrendingUp,
-  DollarSign
+  DollarSign,
+  ChevronDown
 } from 'lucide-react';
 import { DashboardMetrics, AppSettings, DayRecord, Project } from '../types';
 import { 
@@ -46,6 +47,7 @@ export function MetricsOverview({
 }: MetricsOverviewProps) {
   const [avgPeriod, setAvgPeriod] = useState<'month' | 'quarter'>('month');
   const [isQuarterWeeksModalOpen, setIsQuarterWeeksModalOpen] = useState(false);
+  const [isBillableExpanded, setIsBillableExpanded] = useState(false);
 
   const currentTodaySeconds = metrics.todaySeconds + liveExtraSeconds;
   const currentWeekSeconds = metrics.weekSeconds + liveExtraSeconds;
@@ -223,16 +225,51 @@ export function MetricsOverview({
 
           {/* Project-Isolated Billable Total */}
           {weeklyBillable.hasBillableProjects && weeklyBillable.totalBillableAmount > 0 && (
-            <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-              <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1.5">
-                <span className="uppercase tracking-wider text-[10px] text-slate-400">Billable:</span>
-                <span className="font-mono text-emerald-700 font-bold bg-emerald-50 border border-emerald-200/80 px-1.5 py-0.5 rounded shadow-2xs">
-                  ${weeklyBillable.totalBillableAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            <div className="mt-2 pt-2 border-t border-slate-100 text-xs">
+              <button
+                type="button"
+                onClick={() => setIsBillableExpanded(!isBillableExpanded)}
+                className="w-full flex items-center justify-between text-left cursor-pointer group hover:opacity-90 transition-opacity"
+                title="Click to toggle project-by-project billable invoice breakdown"
+              >
+                <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1.5">
+                  <span className="uppercase tracking-wider text-[10px] text-slate-400">Billable:</span>
+                  <span className="font-mono text-emerald-700 font-bold bg-emerald-50 border border-emerald-200/80 px-1.5 py-0.5 rounded shadow-2xs">
+                    ${weeklyBillable.totalBillableAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                  <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${isBillableExpanded ? 'rotate-180 text-emerald-600' : ''}`} />
                 </span>
-              </span>
-              <span className="text-[10px] text-slate-400 font-mono">
-                {weeklyBillable.totalBillableHours}h across {weeklyBillable.items.length} {weeklyBillable.items.length === 1 ? 'project' : 'projects'}
-              </span>
+                <span className="text-[10px] text-slate-400 font-mono group-hover:text-slate-600">
+                  {weeklyBillable.totalBillableHours}h ({weeklyBillable.items.length} {weeklyBillable.items.length === 1 ? 'client' : 'clients'})
+                </span>
+              </button>
+
+              {/* Collapsible Freelancer Invoice Breakdown */}
+              {isBillableExpanded && (
+                <div className="mt-2 space-y-1.5 bg-slate-50/80 p-2.5 rounded-xl border border-slate-200/70 animate-fadeIn">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+                    <span>Freelancer Client Rates</span>
+                    <span>Subtotal</span>
+                  </div>
+                  {weeklyBillable.items.map((item) => (
+                    <div key={item.projectId} className="flex items-center justify-between text-[11px]">
+                      <div className="flex items-center gap-1.5 min-w-0 mr-2">
+                        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                        <span className="font-semibold text-slate-700 truncate" title={`${item.projectName}${item.client ? ` (${item.client})` : ''}`}>
+                          {item.projectName}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-mono shrink-0">
+                          (${item.billableRate}/h)
+                        </span>
+                      </div>
+                      <div className="text-right font-mono shrink-0">
+                        <span className="text-slate-500 mr-1.5">{item.totalHours}h</span>
+                        <span className="font-bold text-emerald-700">${item.billableAmount.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

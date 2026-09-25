@@ -1,5 +1,5 @@
-import { DayRecord, AppSettings, QuarterData, Project, SuggestionTicket, SuggestionStatus } from '../types';
-import { getQuarterName, formatDateToYYYYMMDD, createEmptyPunches, getTodayMondayDate } from './timeCalculations';
+import { DayRecord, AppSettings, QuarterData, Project, SuggestionTicket, SuggestionStatus, SyncTombstones, PunchPair } from '../types';
+import { getQuarterName, formatDateToYYYYMMDD, createEmptyPunches, getTodayMondayDate, normalizeTimeStr } from './timeCalculations';
 
 export const CREATOR_EMAIL = 'reyesabel36@gmail.com';
 
@@ -12,6 +12,7 @@ const STORAGE_KEYS = {
   SAMPLE_SEEDED: 'stt_sample_seeded_v2',
   LAST_SYNC: 'stt_last_sync_v2',
   DEVICE_CLIENT_ID: 'stt_device_client_id_v2',
+  TOMBSTONES: 'stt_tombstones_v2',
 };
 
 export interface AppUsageStats {
@@ -228,10 +229,94 @@ export function loadQuarterData(quarterName: string): DayRecord[] {
 export function saveQuarterData(quarterName: string, records: DayRecord[]): void {
   try {
     const key = STORAGE_KEYS.QUARTERS_PREFIX + quarterName.replace(/\s+/g, '_');
-    localStorage.setItem(key, JSON.stringify(records));
+    const nowIso = new Date().toISOString();
+    const stamped = records.map((r) => ({
+      ...r,
+      updatedAt: r.updatedAt || nowIso,
+    }));
+    localStorage.setItem(key, JSON.stringify(stamped));
   } catch {
     // Storage full
   }
+}
+
+export function loadTombstones(): SyncTombstones {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.TOMBSTONES);
+    if (!raw) return { sessionIds: {}, dates: {} };
+    const parsed = JSON.parse(raw);
+    return {
+      sessionIds: parsed.sessionIds && typeof parsed.sessionIds === 'object' ? parsed.sessionIds : {},
+      dates: parsed.dates && typeof parsed.dates === 'object' ? parsed.dates : {},
+    };
+  } catch {
+    return { sessionIds: {}, dates: {} };
+  }
+}
+
+export function saveTombstones(tombstones: SyncTombstones): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.TOMBSTONES, JSON.stringify(tombstones));
+  } catch {
+    // Ignore
+  }
+}
+
+export function recordDeletedSessionId(sessionId?: string): void {
+  if (!sessionId || typeof sessionId !== 'string' || !sessionId.trim()) return;
+  const current = loadTombstones();
+  current.sessionIds[sessionId.trim()] = new Date().toISOString();
+  saveTombstones(current);
+}
+
+export function recordDeletedSession(punch: PunchPair, dateStr?: string): void {
+  if (!punch) return;
+  const current = loadTombstones();
+  const nowIso = new Date().toISOString();
+
+  // 1. Tombstone explicit sessionId
+  if (punch.sessionId && typeof punch.sessionId === 'string' && punch.sessionId.trim()) {
+    current.sessionIds[punch.sessionId.trim()] = nowIso;
+  }
+
+  // 2. Tombstone multi-day signature from note if present
+  if (punch.note) {
+    const multiDayMatch = punch.note.match(/Multi-day session:\s*([^\[]+)/i);
+    if (multiDayMatch && multiDayMatch[1].trim()) {
+      current.sessionIds[multiDayMatch[1].trim()] = nowIso;
+    }
+  }
+
+  // 3. Tombstone punch signature for single-day session or punch without unique sessionId
+  const inDate = punch.inDate || dateStr || '';
+  const inTime = punch.inTime ? normalizeTimeStr(punch.inTime) : '';
+  const outTime = punch.outTime ? normalizeTimeStr(punch.outTime) : '';
+  if (inDate && inTime) {
+    const punchSig = `punch_del_${inDate}_${inTime}_${outTime}`;
+    current.sessionIds[punchSig] = nowIso;
+  }
+
+  saveTombstones(current);
+}
+
+export function recordDeletedDate(dateStr: string): void {
+  if (!dateStr || typeof dateStr !== 'string' || !dateStr.trim()) return;
+  const current = loadTombstones();
+  current.dates[dateStr.trim()] = new Date().toISOString();
+  saveTombstones(current);
+}
+
+export function combineTombstones(t1?: SyncTombstones, t2?: SyncTombstones): SyncTombstones {
+  const result: SyncTombstones = { sessionIds: {}, dates: {} };
+  if (t1) {
+    Object.assign(result.sessionIds, t1.sessionIds || {});
+    Object.assign(result.dates, t1.dates || {});
+  }
+  if (t2) {
+    Object.assign(result.sessionIds, t2.sessionIds || {});
+    Object.assign(result.dates, t2.dates || {});
+  }
+  return result;
 }
 
 export function listSavedQuarters(): string[] {
@@ -284,88 +369,123 @@ export function clearAllLocalData(): void {
   }
 }
 
-export function mergeQuarterRecords(local: DayRecord[], remote: DayRecord[]): DayRecord[] {
+export function mergeQuarterRecords(
+  local: DayRecord[],
+  remote: DayRecord[],
+  tombstones?: SyncTombstones
+): DayRecord[] {
   const dayMap = new Map<string, DayRecord>();
   const isSampleFlag = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEYS.SAMPLE_SEEDED) : null;
+  const activeTombstones = tombstones || loadTombstones();
 
-  const sanitizePunches = (punches: any[]) => {
-    if (!Array.isArray(punches)) return [];
-    if (isSampleFlag === 'false') {
-      return punches.filter((p) => !isSampleRecordOrPunch(p));
+  const isSessionTombstoned = (p: PunchPair, recordDate?: string): boolean => {
+    if (!p) return false;
+    if (p.sessionId && activeTombstones.sessionIds[p.sessionId.trim()]) {
+      return true;
     }
-    return punches;
+    if (p.note) {
+      for (const tombKey of Object.keys(activeTombstones.sessionIds)) {
+        if (tombKey.length > 5 && p.note.includes(tombKey)) {
+          return true;
+        }
+      }
+    }
+    const inDate = p.inDate || recordDate || '';
+    const inTime = p.inTime ? normalizeTimeStr(p.inTime) : '';
+    const outTime = p.outTime ? normalizeTimeStr(p.outTime) : '';
+    if (inDate && inTime) {
+      const punchSig = `punch_del_${inDate}_${inTime}_${outTime}`;
+      if (activeTombstones.sessionIds[punchSig]) return true;
+    }
+    return false;
   };
 
+  const isDateTombstoned = (d: string, dayUpdatedAt?: string): boolean => {
+    const tombTimeStr = activeTombstones.dates[d];
+    if (!tombTimeStr) return false;
+    if (!dayUpdatedAt) return true;
+    return new Date(tombTimeStr).getTime() >= new Date(dayUpdatedAt).getTime();
+  };
+
+  const sanitizePunches = (punches: any[], recordDate?: string) => {
+    if (!Array.isArray(punches)) return [];
+    let list = punches;
+    if (isSampleFlag === 'false') {
+      list = list.filter((p) => !isSampleRecordOrPunch(p));
+    }
+    return list.filter((p) => !isSessionTombstoned(p, recordDate));
+  };
+
+  // 1. Index local records
   local.forEach((r) => {
-    if (r && r.date) {
-      dayMap.set(r.date, { ...r, punches: sanitizePunches(r.punches) });
+    if (r && r.date && !isDateTombstoned(r.date, r.updatedAt)) {
+      const sanitized = sanitizePunches(r.punches, r.date);
+      if (sanitized.length > 0 || (r.notes && r.notes.trim().length > 0)) {
+        dayMap.set(r.date, {
+          ...r,
+          punches: sanitized,
+        });
+      }
     }
   });
 
+  // 2. Reconcile with remote records using timestamps
   remote.forEach((remoteRec) => {
     if (!remoteRec || !remoteRec.date) return;
     const d = remoteRec.date;
-    const localRec = dayMap.get(d);
-
-    if (!localRec) {
-      dayMap.set(d, { ...remoteRec, punches: sanitizePunches(remoteRec.punches) });
+    if (isDateTombstoned(d, remoteRec.updatedAt)) {
+      dayMap.delete(d);
       return;
     }
 
-    const punchMap = new Map<string, any>();
-
-    (localRec.punches || []).forEach((p, idx) => {
-      const pKey = p.inTime ? `in_${p.inTime}` : `idx_${idx}`;
-      punchMap.set(pKey, { ...p });
-    });
-
-    (sanitizePunches(remoteRec.punches) || []).forEach((remoteP, idx) => {
-      const pKey = remoteP.inTime ? `in_${remoteP.inTime}` : `idx_${idx}`;
-      const existingP = punchMap.get(pKey);
-      if (!existingP) {
-        punchMap.set(pKey, { ...remoteP });
-      } else {
-        const mergedOut = remoteP.outTime || existingP.outTime || '';
-        const mergedIn = remoteP.inTime || existingP.inTime || '';
-        const mergedProjId = remoteP.projectId || existingP.projectId;
-        const mergedProjName = remoteP.projectName || existingP.projectName;
-        const mergedNote = remoteP.note || existingP.note;
-        punchMap.set(pKey, {
-          ...existingP,
-          ...remoteP,
-          inTime: mergedIn,
-          outTime: mergedOut,
-          projectId: mergedProjId,
-          projectName: mergedProjName,
-          note: mergedNote,
+    const localRec = dayMap.get(d);
+    if (!localRec) {
+      const sanitized = sanitizePunches(remoteRec.punches, d);
+      // Only adopt remote record if it actually contains work or notes
+      if (sanitized.length > 0 || (remoteRec.notes && remoteRec.notes.trim().length > 0)) {
+        dayMap.set(d, {
+          ...remoteRec,
+          punches: sanitized,
         });
       }
-    });
-
-    const mergedPunches = Array.from(punchMap.values()).sort((a, b) => {
-      const aTime = a.inTime || '';
-      const bTime = b.inTime || '';
-      return aTime.localeCompare(bTime);
-    });
-
-    let mergedNotes = remoteRec.notes || localRec.notes || undefined;
-    if (remoteRec.notes && localRec.notes && remoteRec.notes !== localRec.notes) {
-      if (remoteRec.notes.includes(localRec.notes)) {
-        mergedNotes = remoteRec.notes;
-      } else if (localRec.notes.includes(remoteRec.notes)) {
-        mergedNotes = localRec.notes;
-      } else {
-        mergedNotes = `${localRec.notes} | ${remoteRec.notes}`;
-      }
+      return;
     }
 
-    dayMap.set(d, {
-      ...localRec,
-      ...remoteRec,
-      punches: mergedPunches,
-      notes: mergedNotes,
-      primaryProjectId: remoteRec.primaryProjectId || localRec.primaryProjectId,
-    });
+    // Both exist: compare timestamps
+    const localTime = new Date(localRec.updatedAt || 0).getTime();
+    const remoteTime = new Date(remoteRec.updatedAt || 0).getTime();
+
+    if (localTime >= remoteTime) {
+      // Local is newer or equal: local punches WIN! Never union-merge deleted punches
+      const localPunches = sanitizePunches(localRec.punches, d);
+      if (localPunches.length > 0 || (localRec.notes && localRec.notes.trim().length > 0)) {
+        dayMap.set(d, {
+          ...remoteRec,
+          ...localRec,
+          punches: localPunches,
+          notes: localRec.notes !== undefined ? localRec.notes : remoteRec.notes,
+          primaryProjectId: localRec.primaryProjectId || remoteRec.primaryProjectId,
+          updatedAt: localRec.updatedAt || new Date().toISOString(),
+        });
+      } else {
+        dayMap.delete(d);
+      }
+    } else {
+      // Remote is newer: remote punches WIN!
+      const remotePunches = sanitizePunches(remoteRec.punches, d);
+      if (remotePunches.length > 0 || (remoteRec.notes && remoteRec.notes.trim().length > 0)) {
+        dayMap.set(d, {
+          ...localRec,
+          ...remoteRec,
+          punches: remotePunches,
+          notes: remoteRec.notes !== undefined ? remoteRec.notes : localRec.notes,
+          primaryProjectId: remoteRec.primaryProjectId || localRec.primaryProjectId,
+          updatedAt: remoteRec.updatedAt || new Date().toISOString(),
+        });
+      } else {
+        dayMap.delete(d);
+      }
+    }
   });
 
   return Array.from(dayMap.values()).sort((a, b) => a.date.localeCompare(b.date));
@@ -398,6 +518,7 @@ export async function syncWithServer(
   const timeoutId = setTimeout(() => controller.abort(), 10000);
 
   try {
+    const localTombstones = loadTombstones();
     const res = await fetch('/api/sync', {
       method: 'POST',
       headers: {
@@ -410,6 +531,7 @@ export async function syncWithServer(
         quarters: quartersToSync,
         projects: projectsToSync,
         settings: settingsToSync,
+        tombstones: localTombstones,
       }),
     });
 
@@ -421,11 +543,17 @@ export async function syncWithServer(
 
     const json = await res.json();
     if (json.success && json.data) {
+      let combinedTombstones = localTombstones;
+      if (json.data.tombstones && typeof json.data.tombstones === 'object') {
+        combinedTombstones = combineTombstones(localTombstones, json.data.tombstones);
+        saveTombstones(combinedTombstones);
+      }
+
       if (json.data.quarters && typeof json.data.quarters === 'object') {
         for (const [qName, remoteDays] of Object.entries(json.data.quarters)) {
           if (Array.isArray(remoteDays)) {
             const localDays = loadQuarterData(qName);
-            const merged = mergeQuarterRecords(localDays, remoteDays as DayRecord[]);
+            const merged = mergeQuarterRecords(localDays, remoteDays as DayRecord[], combinedTombstones);
             saveQuarterData(qName, merged);
           }
         }
@@ -476,11 +604,17 @@ export async function pullFromServer(
 
     const json = await res.json();
     if (json.success && json.data) {
+      let combinedTombstones = loadTombstones();
+      if (json.data.tombstones && typeof json.data.tombstones === 'object') {
+        combinedTombstones = combineTombstones(combinedTombstones, json.data.tombstones);
+        saveTombstones(combinedTombstones);
+      }
+
       if (json.data.quarters && typeof json.data.quarters === 'object') {
         for (const [qName, remoteDays] of Object.entries(json.data.quarters)) {
           if (Array.isArray(remoteDays)) {
             const localDays = loadQuarterData(qName);
-            const merged = mergeQuarterRecords(localDays, remoteDays as DayRecord[]);
+            const merged = mergeQuarterRecords(localDays, remoteDays as DayRecord[], combinedTombstones);
             saveQuarterData(qName, merged);
           }
         }

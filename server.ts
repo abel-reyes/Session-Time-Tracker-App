@@ -279,6 +279,7 @@ interface UserDataStore {
     quarters: { [quarterName: string]: any[] };
     projects: any[];
     settings: any;
+    tombstones?: { sessionIds?: Record<string, string>; dates?: Record<string, string> };
     lastSyncedAt: string;
   };
 }
@@ -724,91 +725,124 @@ app.get(['/api/sync', '/api/sync/pull', '/api/sync/get'], (req, res) => {
   });
 });
 
-function mergeDayRecordsList(existingDays: any[] = [], incomingDays: any[] = []): any[] {
-  const dayMap = new Map<string, any>();
+function mergeDayRecordsList(
+  existingDays: any[] = [],
+  incomingDays: any[] = [],
+  tombstones?: { sessionIds?: Record<string, string>; dates?: Record<string, string> }
+): any[] {
+  const activeTombstones = tombstones || { sessionIds: {}, dates: {} };
+  const tombSessionIds = activeTombstones.sessionIds || {};
+  const tombDates = activeTombstones.dates || {};
 
+  const normalizeTimeStr = (t?: string | null): string => {
+    if (!t) return '';
+    const trimmed = String(t).trim();
+    if (trimmed.length === 5) return `${trimmed}:00`;
+    return trimmed;
+  };
+
+  const isSessionTombstoned = (p: any, recordDate?: string): boolean => {
+    if (!p) return false;
+    if (p.sessionId && tombSessionIds[String(p.sessionId).trim()]) {
+      return true;
+    }
+    if (p.note) {
+      for (const tombKey of Object.keys(tombSessionIds)) {
+        if (tombKey.length > 5 && String(p.note).includes(tombKey)) {
+          return true;
+        }
+      }
+    }
+    const inDate = p.inDate || recordDate || '';
+    const inTime = p.inTime ? normalizeTimeStr(p.inTime) : '';
+    const outTime = p.outTime ? normalizeTimeStr(p.outTime) : '';
+    if (inDate && inTime) {
+      const punchSig = `punch_del_${inDate}_${inTime}_${outTime}`;
+      if (tombSessionIds[punchSig]) return true;
+    }
+    return false;
+  };
+
+  const isDateTombstoned = (d: string, dayUpdatedAt?: string): boolean => {
+    const tombTimeStr = tombDates[d];
+    if (!tombTimeStr) return false;
+    if (!dayUpdatedAt) return true;
+    return new Date(tombTimeStr).getTime() >= new Date(dayUpdatedAt).getTime();
+  };
+
+  const sanitizePunches = (punches: any[], recordDate?: string) => {
+    if (!Array.isArray(punches)) return [];
+    return punches.filter((p) => !isSessionTombstoned(p, recordDate));
+  };
+
+  const dayMap = new Map<string, any>();
   const normalizeDateKey = (d: any) => (d && d.date ? String(d.date).trim() : '');
 
-  // Seed with existing days
+  // 1. Seed with existing days that are not tombstoned
   existingDays.forEach((day) => {
     const key = normalizeDateKey(day);
-    if (key) {
-      dayMap.set(key, { ...day, punches: Array.isArray(day.punches) ? [...day.punches] : [] });
+    if (key && !isDateTombstoned(key, day.updatedAt)) {
+      const sanitized = sanitizePunches(day.punches, key);
+      if (sanitized.length > 0 || (day.notes && String(day.notes).trim().length > 0)) {
+        dayMap.set(key, { ...day, punches: sanitized });
+      }
     }
   });
 
-  // Merge incoming days
+  // 2. Reconcile with incoming days using timestamp comparison (never union-merge deleted punches)
   incomingDays.forEach((incomingDay) => {
     const key = normalizeDateKey(incomingDay);
     if (!key) return;
 
-    const existingDay = dayMap.get(key);
-    if (!existingDay) {
-      dayMap.set(key, { ...incomingDay, punches: Array.isArray(incomingDay.punches) ? [...incomingDay.punches] : [] });
+    if (isDateTombstoned(key, incomingDay.updatedAt)) {
+      dayMap.delete(key);
       return;
     }
 
-    // Merge punches for the same date
-    const existingPunches: any[] = Array.isArray(existingDay.punches) ? existingDay.punches : [];
-    const incomingPunches: any[] = Array.isArray(incomingDay.punches) ? incomingDay.punches : [];
-
-    const punchMap = new Map<string, any>();
-
-    existingPunches.forEach((p, idx) => {
-      const pKey = p.inTime ? `in_${p.inTime}` : `idx_${idx}`;
-      punchMap.set(pKey, { ...p });
-    });
-
-    incomingPunches.forEach((inP, idx) => {
-      const pKey = inP.inTime ? `in_${inP.inTime}` : `idx_${idx}`;
-      const currP = punchMap.get(pKey);
-      if (!currP) {
-        punchMap.set(pKey, { ...inP });
-      } else {
-        const mergedOut = inP.outTime || currP.outTime || '';
-        const mergedIn = inP.inTime || currP.inTime || '';
-        const mergedProjId = inP.projectId || currP.projectId;
-        const mergedProjName = inP.projectName || currP.projectName;
-        const mergedNote = inP.note || currP.note;
-
-        punchMap.set(pKey, {
-          ...currP,
-          ...inP,
-          inTime: mergedIn,
-          outTime: mergedOut,
-          projectId: mergedProjId,
-          projectName: mergedProjName,
-          note: mergedNote,
-        });
+    const existingDay = dayMap.get(key);
+    if (!existingDay) {
+      const sanitized = sanitizePunches(incomingDay.punches, key);
+      if (sanitized.length > 0 || (incomingDay.notes && String(incomingDay.notes).trim().length > 0)) {
+        dayMap.set(key, { ...incomingDay, punches: sanitized });
       }
-    });
-
-    // Sort punches by inTime
-    const mergedPunches = Array.from(punchMap.values()).sort((a, b) => {
-      const aTime = a.inTime || '';
-      const bTime = b.inTime || '';
-      return aTime.localeCompare(bTime);
-    });
-
-    // Merge notes
-    let mergedNotes = incomingDay.notes || existingDay.notes || undefined;
-    if (incomingDay.notes && existingDay.notes && incomingDay.notes !== existingDay.notes) {
-      if (incomingDay.notes.includes(existingDay.notes)) {
-        mergedNotes = incomingDay.notes;
-      } else if (existingDay.notes.includes(incomingDay.notes)) {
-        mergedNotes = existingDay.notes;
-      } else {
-        mergedNotes = `${existingDay.notes} | ${incomingDay.notes}`;
-      }
+      return;
     }
 
-    dayMap.set(key, {
-      ...existingDay,
-      ...incomingDay,
-      punches: mergedPunches,
-      notes: mergedNotes,
-      primaryProjectId: incomingDay.primaryProjectId || existingDay.primaryProjectId,
-    });
+    // Both exist: compare timestamps
+    const existingTime = new Date(existingDay.updatedAt || 0).getTime();
+    const incomingTime = new Date(incomingDay.updatedAt || 0).getTime();
+
+    if (incomingTime >= existingTime || !existingDay.updatedAt) {
+      // Incoming is newer or equal: incoming punches replace existing punches
+      const sanitized = sanitizePunches(incomingDay.punches, key);
+      if (sanitized.length > 0 || (incomingDay.notes && String(incomingDay.notes).trim().length > 0)) {
+        dayMap.set(key, {
+          ...existingDay,
+          ...incomingDay,
+          punches: sanitized,
+          notes: incomingDay.notes !== undefined ? incomingDay.notes : existingDay.notes,
+          primaryProjectId: incomingDay.primaryProjectId || existingDay.primaryProjectId,
+          updatedAt: incomingDay.updatedAt || new Date().toISOString(),
+        });
+      } else {
+        dayMap.delete(key);
+      }
+    } else {
+      // Existing server day is strictly newer
+      const sanitized = sanitizePunches(existingDay.punches, key);
+      if (sanitized.length > 0 || (existingDay.notes && String(existingDay.notes).trim().length > 0)) {
+        dayMap.set(key, {
+          ...incomingDay,
+          ...existingDay,
+          punches: sanitized,
+          notes: existingDay.notes !== undefined ? existingDay.notes : incomingDay.notes,
+          primaryProjectId: existingDay.primaryProjectId || incomingDay.primaryProjectId,
+          updatedAt: existingDay.updatedAt || new Date().toISOString(),
+        });
+      } else {
+        dayMap.delete(key);
+      }
+    }
   });
 
   return Array.from(dayMap.values()).sort((a, b) => a.date.localeCompare(b.date));
@@ -817,7 +851,7 @@ function mergeDayRecordsList(existingDays: any[] = [], incomingDays: any[] = [])
 // Sync POST endpoint (push data via email without passwords/pins)
 app.post(['/api/sync', '/api/sync/push', '/api/sync/save'], (req, res) => {
   const emailHeader = req.headers['x-user-email'] as string;
-  const { email, quarters, projects, settings } = req.body;
+  const { email, quarters, projects, settings, tombstones } = req.body;
 
   const targetEmail = (emailHeader || email || '').trim().toLowerCase();
 
@@ -831,15 +865,25 @@ app.post(['/api/sync', '/api/sync/push', '/api/sync/save'], (req, res) => {
     quarters: {},
     projects: [],
     settings: {},
+    tombstones: { sessionIds: {}, dates: {} },
     lastSyncedAt: new Date().toISOString(),
   };
+
+  // Merge tombstones
+  const existingTombstones = record.tombstones || { sessionIds: {}, dates: {} };
+  const incomingTombstones = tombstones || { sessionIds: {}, dates: {} };
+  const mergedTombstones = {
+    sessionIds: { ...(existingTombstones.sessionIds || {}), ...(incomingTombstones.sessionIds || {}) },
+    dates: { ...(existingTombstones.dates || {}), ...(incomingTombstones.dates || {}) },
+  };
+  record.tombstones = mergedTombstones;
 
   if (quarters && typeof quarters === 'object') {
     const updatedQuarters: Record<string, any[]> = { ...(record.quarters || {}) };
     for (const [qName, incomingDays] of Object.entries(quarters)) {
       if (Array.isArray(incomingDays)) {
         const existingDays = updatedQuarters[qName] || [];
-        updatedQuarters[qName] = mergeDayRecordsList(existingDays, incomingDays);
+        updatedQuarters[qName] = mergeDayRecordsList(existingDays, incomingDays, mergedTombstones);
       }
     }
     record.quarters = updatedQuarters;

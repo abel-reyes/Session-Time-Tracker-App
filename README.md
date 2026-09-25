@@ -73,6 +73,7 @@ A modern, high-precision session timestamp tracker and productivity analytics pl
 ### Offline-First & Cross-Device Sync
 - **PWA Ready**: Installable to desktop, tablet, and mobile home screens with offline caching via Service Workers.
 - **Hybrid Storage Engine**: Instant optimistic updates stored in browser storage (`localStorage`), backed by server-side synchronization endpoints.
+- **Tombstone Sync**: Deletions of single-day and multi-day sessions are atomically tracked via tombstones to ensure deleted data is permanently purged across all connected devices and never resurrected during sync.
 
 ---
 

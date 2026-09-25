@@ -21,8 +21,10 @@ import {
   formatSecondsToHHMMSS, 
   formatDateToYYYYMMDD, 
   formatDateMMDDYYYY,
-  parseCSVToRecordsAndProjects
+  parseCSVToRecordsAndProjects,
+  deleteSessionFromRecords
 } from '../utils/timeCalculations';
+import { recordDeletedSession, recordDeletedDate } from '../utils/storage';
 import { ConfirmModal, ConfirmDialogOptions } from './ConfirmModal';
 import { EmptyState } from './EmptyState';
 
@@ -98,11 +100,14 @@ export function TimesheetDetailModal({
     maxPopulatedSlots = Math.max(maxPopulatedSlots, editForm.punches.length);
   }
 
+  const [removedMultiDayPunches, setRemovedMultiDayPunches] = useState<PunchPair[]>([]);
+
   // Minimum 1 session column so the table is always structured and valid
   const maxSlots = Math.max(maxPopulatedSlots, 1);
 
   const handleStartEdit = (record: DayRecord) => {
     setEditingDate(record.date);
+    setRemovedMultiDayPunches([]);
     const punchesCopy: PunchPair[] = (record.punches || []).map((p) => ({ ...p }));
     while (punchesCopy.length < maxSlots) {
       punchesCopy.push({ inTime: '', outTime: '', note: '' });
@@ -115,12 +120,16 @@ export function TimesheetDetailModal({
 
   const handleRemovePunchSlot = (slotIdx: number) => {
     if (!editForm) return;
+    const targetPunch = editForm.punches?.[slotIdx];
     const punchesCopy = [...(editForm.punches || [])];
     punchesCopy.splice(slotIdx, 1);
     setEditForm({
       ...editForm,
       punches: punchesCopy.length > 0 ? punchesCopy : [{ inTime: '', outTime: '', note: '' }],
     });
+    if (targetPunch && (targetPunch.inTime || targetPunch.outTime)) {
+      setRemovedMultiDayPunches((prev) => [...prev, targetPunch]);
+    }
   };
 
   const handleSaveEdit = () => {
@@ -133,9 +142,18 @@ export function TimesheetDetailModal({
       ...editForm,
       punches: cleanPunches,
       notes: editForm.notes?.trim() || undefined,
+      updatedAt: new Date().toISOString(),
     };
-    const updated = records.map((r) => (r.date === editForm.date ? updatedRecord : r));
+    let updated = records.map((r) => (r.date === editForm.date ? updatedRecord : r));
+
+    // For all removed punches, record tombstones and purge any multi-day linked segments!
+    for (const rem of removedMultiDayPunches) {
+      recordDeletedSession(rem, editForm.date);
+      updated = deleteSessionFromRecords(updated, editForm.date, rem);
+    }
+
     onSaveRecords(updated);
+    setRemovedMultiDayPunches([]);
     setEditingDate(null);
     setEditForm(null);
   };
@@ -147,7 +165,17 @@ export function TimesheetDetailModal({
       confirmText: 'Delete Record',
       variant: 'danger',
       onConfirm: () => {
-        const updated = records.filter((r) => r.date !== dateStr);
+        const targetRec = records.find((r) => r.date === dateStr);
+        let updated = records.filter((r) => r.date !== dateStr);
+        if (targetRec && targetRec.punches) {
+          for (const p of targetRec.punches) {
+            recordDeletedSession(p, dateStr);
+            if (p.isMultiDaySegment || p.sessionId || (p.note && p.note.includes('Multi-day'))) {
+              updated = deleteSessionFromRecords(updated, dateStr, p);
+            }
+          }
+        }
+        recordDeletedDate(dateStr);
         onSaveRecords(updated);
       },
     });
@@ -512,12 +540,12 @@ export function TimesheetDetailModal({
                                       }}
                                       className="w-16 px-1 py-0.5 text-center text-xs border border-emerald-300 rounded-md bg-white focus:outline-emerald-600 font-mono"
                                     />
-                                    {editForm.punches.length > 1 && (
+                                    {(editForm.punches.length > 1 || Boolean(editForm.punches[slotIdx]?.inTime || editForm.punches[slotIdx]?.outTime)) && (
                                       <button
                                         type="button"
                                         onClick={() => handleRemovePunchSlot(slotIdx)}
                                         className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-                                        title={`Remove session #${slotIdx + 1}`}
+                                        title={`Remove / Clear session #${slotIdx + 1}`}
                                       >
                                         <Trash2 className="w-3 h-3 text-rose-500" />
                                       </button>

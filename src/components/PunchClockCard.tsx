@@ -29,6 +29,7 @@ import {
   getActiveElapsedSeconds
 } from '../utils/timeCalculations';
 import { DayRecord, PunchPair, Project } from '../types';
+import { recordDeletedSession } from '../utils/storage';
 import { ConfirmModal, ConfirmDialogOptions } from './ConfirmModal';
 import { EmptyState } from './EmptyState';
 import { ProjectBadge } from './ProjectBadge';
@@ -41,6 +42,8 @@ interface PunchClockCardProps {
   onOpenProjectsModal?: () => void;
   onPunch: (type: 'IN' | 'OUT', customDate?: string, customTime?: string, projectId?: string, note?: string) => void;
   onUpdateTodaySessions?: (updatedPunches: PunchPair[]) => void;
+  onDeleteSession?: (dateStr: string, punch: PunchPair) => void;
+  onDiscardActiveSession?: () => void;
   isPunchedIn: boolean;
   activeInTime: string | null;
   activeInDate?: string | null;
@@ -61,6 +64,8 @@ export function PunchClockCard({
   onOpenProjectsModal,
   onPunch,
   onUpdateTodaySessions,
+  onDeleteSession,
+  onDiscardActiveSession,
   isPunchedIn,
   activeInTime,
   activeInDate,
@@ -207,18 +212,44 @@ export function PunchClockCard({
     setEditingSessionIdx(null);
   };
 
-  // Delete session
+  // Delete session with support for multi-day sessions
   const handleDeleteSession = (sessionIdx: number) => {
+    const rawPunches = todayRecord?.punches ? [...todayRecord.punches] : [];
+    const targetPunch = rawPunches[sessionIdx];
+    if (!targetPunch) return;
+
+    const isMultiDay = Boolean(targetPunch.isMultiDaySegment || targetPunch.sessionId);
+
     setConfirmDialog({
-      title: 'Delete Session Slot',
-      message: 'Are you sure you want to delete this recorded session? This cannot be undone.',
+      title: 'Delete Session',
+      message: isMultiDay
+        ? 'This session is part of an overnight / multi-day continuous shift. Deleting it will remove all linked daily segments across all dates in your records. Continue?'
+        : `Are you sure you want to delete this session (${formatTime24to12(targetPunch.inTime)} – ${targetPunch.outTime ? formatTime24to12(targetPunch.outTime) : 'Open'})? This cannot be undone.`,
       confirmText: 'Delete Session',
       variant: 'danger',
       onConfirm: () => {
-        const rawPunches = todayRecord?.punches ? [...todayRecord.punches] : [];
-        const updated = rawPunches.filter((_, idx) => idx !== sessionIdx);
-        onUpdateTodaySessions?.(updated);
+        if (todayRecord?.date) {
+          recordDeletedSession(targetPunch, todayRecord.date);
+        }
+        if (onDeleteSession && todayRecord?.date) {
+          onDeleteSession(todayRecord.date, targetPunch);
+        } else {
+          const updated = rawPunches.filter((_, idx) => idx !== sessionIdx);
+          onUpdateTodaySessions?.(updated);
+        }
         setEditingSessionIdx(null);
+      },
+    });
+  };
+
+  const handleDiscardActive = () => {
+    setConfirmDialog({
+      title: 'Discard Active Session?',
+      message: `Are you sure you want to discard the current active Clock In session started at ${formatTime24to12(activeInTime || '')}${activeInDate ? ` on ${formatDateMMDDYYYY(activeInDate)}` : ''}? The active punch will be completely deleted.`,
+      confirmText: 'Discard Session',
+      variant: 'danger',
+      onConfirm: () => {
+        onDiscardActiveSession?.();
       },
     });
   };
