@@ -506,8 +506,8 @@ export default function App() {
   }, [records, todayStr]);
 
   const weeklyChartData: WeeklyChartData = useMemo(() => {
-    return getWeeklyChartData(records, new Date());
-  }, [records]);
+    return getWeeklyChartData(records, new Date(), projects);
+  }, [records, projects]);
 
   const quarterWeeks = useMemo(() => {
     return getQuarterWeeksBreakdown(records, activeQuarter, liveElapsedSeconds);
@@ -1355,6 +1355,7 @@ export default function App() {
               <VisualCharts
                 chartData={weeklyChartData}
                 records={records}
+                projects={projects}
                 dailyGoalHours={settings.dailyGoalHours}
                 enableGoals={settings.enableGoals !== false}
                 chartColor={settings.chartColor || '#0F172A'}
@@ -1515,7 +1516,7 @@ export default function App() {
         themeColor={settings.themeColor || '#0284C7'}
       />
 
-      {/* Persistent Floating Clock Bubble Prototype (Active when enabled in Settings and not on the primary Clock In/Out tab or combined Clock & Metrics tab) */}
+      {/* Persistent Floating Clock Bubble (Active when enabled in Settings and not on the primary Clock In/Out tab or combined Clock & Metrics tab) */}
       {settings.showFloatingClockBubble !== false && activeViewTab !== 'clock' && activeViewTab !== 'clock-metrics' && (
         <FloatingClockBubble
           todayRecord={todayRecord}
@@ -1530,6 +1531,13 @@ export default function App() {
           lastPunchTime={punchState.lastPunchTime}
           themeColor={settings.themeColor || '#0284C7'}
           secondaryColor={settings.chartColor || '#0F172A'}
+          position={settings.floatingClockPosition || 'bottom-left'}
+          onTogglePosition={() => {
+            const nextPos = (settings.floatingClockPosition || 'bottom-left') === 'bottom-left' ? 'bottom-right' : 'bottom-left';
+            const updated = { ...settings, floatingClockPosition: nextPos };
+            setSettings(updated);
+            saveSettings(updated);
+          }}
           onNavigateToClockTab={() => handleTabChange('clock')}
         />
       )}

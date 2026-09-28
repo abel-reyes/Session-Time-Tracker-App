@@ -740,11 +740,15 @@ export function getWeeklyChartData(
 
       for (let i = 0; i < punches.length; i++) {
         const p = punches[i];
+        const matchProject = projects.find(
+          (pr) => (p.projectId && pr.id === p.projectId) || 
+                  (p.projectName && pr.name.toLowerCase() === p.projectName.toLowerCase())
+        );
+
         if (p.inTime && p.outTime) {
           const start = timeToDecimalHours(p.inTime);
           const end = timeToDecimalHours(p.outTime);
           const durSec = getDurationInSeconds(p.inTime, p.outTime, p.inDate, p.outDate);
-          const matchProject = projects.find((pr) => pr.id === p.projectId);
 
           if (end > start) {
             spans[diffThisDays].push({
@@ -768,6 +772,23 @@ export function getWeeklyChartData(
               note: p.note,
             });
           }
+        } else if (p.inTime && !p.outTime) {
+          // Active in-progress punch for current day
+          const start = timeToDecimalHours(p.inTime);
+          const now = new Date();
+          const currentHour = now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
+          const end = Math.min(24, Math.max(start + 0.1, currentHour));
+          const durSec = Math.max(0, Math.floor((end - start) * 3600));
+
+          spans[diffThisDays].push({
+            startHour: start,
+            endHour: end,
+            label: `${formatTime24to12(p.inTime)} – In Progress`,
+            durationFormatted: formatSecondsToHuman(durSec),
+            projectName: matchProject?.name || p.projectName,
+            projectColor: matchProject?.color,
+            note: p.note,
+          });
         }
       }
     }

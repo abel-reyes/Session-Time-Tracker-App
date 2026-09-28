@@ -478,6 +478,14 @@ export function VisualCharts({
                             )
                           );
 
+                          // Determine relative color of project, or primaryColor if no project
+                          const matchedProject = projects.find(
+                            (pr) =>
+                              (span.projectName && (pr.name.toLowerCase() === span.projectName.toLowerCase() || pr.id === span.projectName)) ||
+                              (span.projectColor && pr.color.toLowerCase() === span.projectColor.toLowerCase())
+                          );
+                          const barColor = span.projectColor || matchedProject?.color || primaryColor;
+
                           return (
                             <div
                               key={sIdx}
@@ -485,19 +493,19 @@ export function VisualCharts({
                               style={{ 
                                 left: `${leftPct}%`, 
                                 width: `${widthPct}%`, 
-                                backgroundColor: primaryColor 
+                                backgroundColor: barColor 
                               }}
-                              title={`${span.label} (${span.durationFormatted}) ${span.projectName ? `[${span.projectName}]` : ''} ${span.note ? `\nNote: ${span.note}` : ''}`}
+                              title={`${span.label} (${span.durationFormatted}) ${span.projectName ? `[Project: ${span.projectName}]` : '[General / No Project]'}${span.note ? `\nNote: ${span.note}` : ''}`}
                             >
                               <div className="flex items-center gap-1 truncate">
                                 {span.projectName && (
-                                  <span className="px-1 py-0.2 bg-black/30 text-white rounded-xs text-[9px]">
+                                  <span className="px-1 py-0.2 bg-black/35 text-white rounded-xs text-[9px] font-bold shrink-0">
                                     {span.projectName}
                                   </span>
                                 )}
                                 <span className="truncate">{span.label}</span>
                               </div>
-                              <span className="font-mono text-[9px] opacity-95 hidden sm:inline ml-1">
+                              <span className="font-mono text-[9px] opacity-95 hidden sm:inline ml-1 shrink-0">
                                 {span.durationFormatted}
                               </span>
                             </div>
@@ -514,11 +522,35 @@ export function VisualCharts({
               })}
             </div>
 
-            <div className="flex items-center justify-between text-[11px] text-slate-400 pt-2 border-t border-slate-100">
-              <span>Hover over session bars to see duration and project annotations.</span>
-              <span className="font-medium font-mono" style={{ color: primaryColor }}>
-                06:00 AM – 12:00 AM (Midnight)
-              </span>
+            <div className="pt-2 border-t border-slate-100 space-y-2">
+              <div className="flex items-center justify-between text-[11px] text-slate-400">
+                <span>Hover over session bars to see duration and project annotations.</span>
+                <span className="font-medium font-mono" style={{ color: primaryColor }}>
+                  06:00 AM – 12:00 AM (Midnight)
+                </span>
+              </div>
+
+              {/* Dynamic Project Color Indicators */}
+              <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-600">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <span
+                    className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs"
+                    style={{ backgroundColor: primaryColor }}
+                  />
+                  <span>General (No Project)</span>
+                </span>
+                {projects
+                  .filter((p) => !p.isDeleted)
+                  .map((p) => (
+                    <span key={p.id} className="flex items-center gap-1.5 font-medium">
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs"
+                        style={{ backgroundColor: p.color }}
+                      />
+                      <span>{p.name}</span>
+                    </span>
+                  ))}
+              </div>
             </div>
           </div>
         )}

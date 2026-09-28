@@ -75,6 +75,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   enableProjects: true,
   enableStreaks: false,
   showFloatingClockBubble: true,
+  floatingClockPosition: 'bottom-left',
   weeklyGoalHours: 0,
   dailyGoalHours: 0,
   soundEnabled: true,

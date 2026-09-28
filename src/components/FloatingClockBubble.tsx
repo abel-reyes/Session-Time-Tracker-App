@@ -11,7 +11,8 @@ import {
   AlertCircle, 
   CheckCircle, 
   FileText,
-  ExternalLink
+  ExternalLink,
+  ArrowLeftRight
 } from 'lucide-react';
 import { 
   formatTimeToHHMMSS, 
@@ -38,6 +39,8 @@ interface FloatingClockBubbleProps {
   lastPunchTime: string | null;
   themeColor: string;
   secondaryColor?: string;
+  position?: 'bottom-left' | 'bottom-right';
+  onTogglePosition?: () => void;
   onNavigateToClockTab?: () => void;
 }
 
@@ -54,6 +57,8 @@ export function FloatingClockBubble({
   lastPunchTime,
   themeColor,
   secondaryColor = '#0F172A',
+  position = 'bottom-left',
+  onTogglePosition,
   onNavigateToClockTab,
 }: FloatingClockBubbleProps) {
   const [isOpen, setIsOpen] = useState<boolean>(false);
@@ -135,44 +140,49 @@ export function FloatingClockBubble({
 
   return (
     <>
-      {/* 1. FLOATING BUBBLE (Elevated above the bottom footer & links) */}
-      <div className="fixed bottom-24 sm:bottom-20 left-4 sm:left-5 z-40 print:hidden select-none">
+      {/* 1. FLOATING BUBBLE (Preserved in original vertical placement, customizable left/right side) */}
+      <div 
+        className={`fixed bottom-24 sm:bottom-20 ${
+          position === 'bottom-right' ? 'right-4 sm:right-5' : 'left-4 sm:left-5'
+        } z-40 print:hidden select-none transition-all duration-300`}
+      >
         <button
           type="button"
           id="persistent-floating-clock-bubble"
           onClick={() => setIsOpen(true)}
-          className="group relative flex items-center gap-2 p-3.5 rounded-2xl shadow-xl transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer text-white border-2 border-white/20"
+          className={`group relative flex items-center justify-center rounded-2xl shadow-xl transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer text-white border-2 border-white/20 ${
+            isPunchedIn
+              ? 'h-11 px-3 gap-2'
+              : 'h-11 w-11 sm:w-auto sm:px-3 gap-1.5'
+          }`}
           style={{ backgroundColor: themeColor }}
-          title={isPunchedIn ? `Active Session: ${formatSecondsToHHMMSS(sessionSeconds)} (Click to open clock)` : 'Click to open quick clock drawer'}
+          title={isPunchedIn ? `Active Session: ${formatSecondsToHHMMSS(sessionSeconds)} (Click to open quick clock)` : 'Click to open quick clock drawer'}
           aria-label="Open Quick Clock"
         >
-          {/* Animated pulse ring if session is active */}
+          {/* Active session pulsing indicator inside button */}
           {isPunchedIn && (
-            <span
-              className="absolute -top-1 -right-1 flex h-3.5 w-3.5"
-            >
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500 border-2 border-white"></span>
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-300 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
             </span>
           )}
 
-          <div className="flex items-center justify-center">
+          <div className="flex items-center justify-center shrink-0">
             <Clock className={`w-5 h-5 ${isPunchedIn ? 'animate-pulse' : ''}`} />
           </div>
 
-          {/* Mini Live Timer Badge if Clocked In */}
+          {/* Mini Live Timer - Single-line horizontal layout so height never expands upward */}
           {isPunchedIn ? (
-            <div className="flex flex-col text-left pr-0.5">
-              <span className="text-[9px] font-extrabold tracking-wider uppercase opacity-90 leading-tight flex items-center gap-1">
-                Active
-                {isMultiDay && <span className="text-[8px] bg-white/30 px-1 rounded-sm">🌙 +{Math.max(1, Math.floor(sessionSeconds / 86400))}d</span>}
-              </span>
-              <span className="font-mono text-xs font-black tracking-tight leading-tight">
-                {formatSecondsToHHMMSS(sessionSeconds)}
-              </span>
+            <div className="flex items-center gap-1 font-mono text-xs font-black tracking-tight leading-none pr-0.5">
+              <span>{formatSecondsToHHMMSS(sessionSeconds)}</span>
+              {isMultiDay && (
+                <span className="text-[8px] bg-white/30 px-1 py-0.2 rounded-xs font-sans font-bold">
+                  +{Math.max(1, Math.floor(sessionSeconds / 86400))}d
+                </span>
+              )}
             </div>
           ) : (
-            <span className="hidden sm:inline-block text-xs font-bold tracking-wide pr-1">
+            <span className="hidden sm:inline-block text-xs font-bold tracking-wide pr-0.5">
               Clock
             </span>
           )}
@@ -215,6 +225,21 @@ export function FloatingClockBubble({
                 </div>
 
                 <div className="flex items-center gap-1">
+                  {onTogglePosition && (
+                    <button
+                      type="button"
+                      onClick={onTogglePosition}
+                      className="p-1.5 text-xs text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg flex items-center gap-1 font-medium transition-colors cursor-pointer"
+                      title={`Move button to ${position === 'bottom-right' ? 'Left side' : 'Right side'}`}
+                      aria-label="Change quick clock screen side"
+                    >
+                      <ArrowLeftRight className="w-3.5 h-3.5" />
+                      <span className="text-[11px] hidden sm:inline">
+                        {position === 'bottom-right' ? 'Move Left' : 'Move Right'}
+                      </span>
+                    </button>
+                  )}
+
                   {onNavigateToClockTab && (
                     <button
                       type="button"
@@ -233,7 +258,7 @@ export function FloatingClockBubble({
                   <button
                     type="button"
                     onClick={() => setIsOpen(false)}
-                    className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+                    className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
                     aria-label="Close"
                   >
                     <X className="w-4 h-4" />

@@ -157,6 +157,7 @@ export interface AppSettings {
   enableProjects: boolean;
   enableStreaks: boolean; // default false as requested
   showFloatingClockBubble?: boolean; // Persistent clock bubble on non-clock tabs
+  floatingClockPosition?: 'bottom-left' | 'bottom-right'; // Screen side placement (default: bottom-left)
   weeklyGoalHours: number;
   dailyGoalHours: number;
   soundEnabled: boolean;

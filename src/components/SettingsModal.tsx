@@ -1074,26 +1074,65 @@ export function SettingsModal({
                 </div>
 
                 {/* Persistent Floating Clock Bubble Toggle */}
-                <label className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer hover:bg-slate-100/70 transition-colors">
-                  <div className="space-y-0.5 pr-2">
-                    <div className="font-bold text-slate-800 flex items-center gap-1.5">
-                      <span>Persistent Floating Clock Bubble</span>
-                      <span className="px-1.5 py-0.2 rounded-full text-[9px] font-extrabold uppercase bg-sky-100 text-sky-800">
-                        Prototype
-                      </span>
+                <div className="space-y-2">
+                  <label className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer hover:bg-slate-100/70 transition-colors">
+                    <div className="space-y-0.5 pr-2">
+                      <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                        <span>Persistent Floating Clock Bubble</span>
+                        <span className="px-1.5 py-0.2 rounded-full text-[9px] font-extrabold uppercase bg-sky-100 text-sky-800">
+                          Prototype
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 leading-tight">
+                        Shows a floating bottom-corner clock icon on all tabs so you can quick clock in/out without leaving your current screen.
+                      </div>
                     </div>
-                    <div className="text-[11px] text-slate-500 leading-tight">
-                      Shows a floating bottom-corner clock icon on all tabs so you can quick clock in/out without leaving your current screen.
+                    <input
+                      type="checkbox"
+                      checked={form.showFloatingClockBubble !== false}
+                      onChange={(e) => setForm({ ...form, showFloatingClockBubble: e.target.checked })}
+                      className="w-4 h-4 rounded-sm cursor-pointer shrink-0"
+                      style={{ accentColor: currentTheme }}
+                    />
+                  </label>
+
+                  {form.showFloatingClockBubble !== false && (
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl border border-slate-200/90 bg-white shadow-2xs">
+                      <div className="space-y-0.5">
+                        <div className="font-bold text-xs text-slate-800">
+                          Button Screen Side
+                        </div>
+                        <div className="text-[11px] text-slate-500 leading-tight">
+                          Position the button on the left or right side for hand accessibility
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 self-start sm:self-auto shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setForm({ ...form, floatingClockPosition: 'bottom-left' })}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                            (form.floatingClockPosition || 'bottom-left') === 'bottom-left'
+                              ? 'bg-white text-slate-900 shadow-2xs font-bold'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Left Side
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setForm({ ...form, floatingClockPosition: 'bottom-right' })}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                            form.floatingClockPosition === 'bottom-right'
+                              ? 'bg-white text-slate-900 shadow-2xs font-bold'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Right Side
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={form.showFloatingClockBubble !== false}
-                    onChange={(e) => setForm({ ...form, showFloatingClockBubble: e.target.checked })}
-                    className="w-4 h-4 rounded-sm cursor-pointer shrink-0"
-                    style={{ accentColor: currentTheme }}
-                  />
-                </label>
+                  )}
+                </div>
 
                 <label className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
                   <div className="space-y-0.5">
