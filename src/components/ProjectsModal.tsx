@@ -173,8 +173,8 @@ export function ProjectsModal({
       return;
     }
 
-    const parsedRate = billableRate.trim() ? parseFloat(billableRate) : undefined;
-    const validRate = parsedRate !== undefined && !isNaN(parsedRate) && parsedRate >= 0 ? parsedRate : undefined;
+    const parsedRate = billableRate.trim() ? parseFloat(billableRate) : 0;
+    const validRate = !isNaN(parsedRate) && parsedRate >= 0 ? parsedRate : 0;
 
     if (isCreating) {
       const nowIso = new Date().toISOString();

@@ -112,6 +112,7 @@ interface SettingsModalProps {
   onDataReload: () => void;
   onOpenGiftModal?: () => void;
   onOpenWidgetGuide?: () => void;
+  onOpenAuthModal?: () => void;
   onSyncRefresh?: () => void;
   initialTab?: SettingsTab;
 }
@@ -124,6 +125,7 @@ export function SettingsModal({
   onDataReload,
   onOpenGiftModal,
   onOpenWidgetGuide,
+  onOpenAuthModal,
   onSyncRefresh,
   initialTab = 'theme',
 }: SettingsModalProps) {
@@ -1115,15 +1117,36 @@ export function SettingsModal({
           {/* TAB 3: CLOUD & SYNC */}
           {activeTab === 'cloud' && (
             <div className="space-y-3.5 animate-fadeIn">
-              {/* Multi-Device Sign In Notice */}
-              <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-xl text-blue-950 space-y-1">
-                <div className="font-bold text-[11px] flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-blue-600" />
-                  Multi-Device Sign In
+              {/* Multi-Device Passphrase Protection & Sign In Notice */}
+              <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-xl text-blue-950 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="font-bold text-[11px] flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Passphrase-Protected Cloud Sync</span>
+                  </div>
+                  {settings.userEmail && (
+                    <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded-md bg-blue-200/80 text-blue-900 truncate max-w-[140px]">
+                      {settings.userEmail}
+                    </span>
+                  )}
                 </div>
                 <p className="text-[11px] text-blue-800 leading-relaxed">
-                  You can click the <strong>Sign In</strong> button in the header bar anytime to sync your timesheets effortlessly across all your laptops and mobile devices.
+                  Your timesheets, projects, and settings can be passphrase-protected and synced seamlessly across all your laptops, tablets, and phones.
                 </p>
+                {onOpenAuthModal && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenAuthModal();
+                    }}
+                    className="w-full py-2 px-3 rounded-lg text-xs font-bold text-white shadow-2xs hover:opacity-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    style={{ backgroundColor: currentTheme }}
+                  >
+                    <span>{settings.userEmail ? 'Manage Passphrase & Cloud Account' : 'Sign In / Set Up Passphrase'}</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
 
               {/* 1. Collapsible Section: Offline PWA & Mobile App */}

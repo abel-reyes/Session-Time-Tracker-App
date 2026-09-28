@@ -171,6 +171,24 @@ export type SyncStatusType = 'synced' | 'syncing' | 'offline' | 'error' | 'local
 
 export type SuggestionStatus = 'new' | 'reviewed' | 'in_progress' | 'completed';
 
+export interface AuthSession {
+  token: string;
+  email: string;
+  name?: string;
+  recoveryKey?: string;
+  rememberDevice?: boolean;
+}
+
+export interface AuthCheckResult {
+  success: boolean;
+  email: string;
+  exists: boolean;
+  hasPassphrase: boolean;
+  isExistingUser?: boolean;
+  isNewUser?: boolean;
+  hasData?: boolean;
+}
+
 export interface SuggestionTicket {
   id: string;
   ticketId?: string; // e.g. CR-2026-001

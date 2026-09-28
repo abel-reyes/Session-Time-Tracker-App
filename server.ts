@@ -1,6 +1,8 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
+import nodemailer from 'nodemailer';
 import { createServer as createViteServer } from 'vite';
 import { APP_VERSION } from './src/version';
 
@@ -274,14 +276,177 @@ function saveSuggestion(entry: SuggestionEntry) {
 }
 
 
+interface UserAccountRecord {
+  passwordHash?: string;
+  passwordSalt?: string;
+  recoveryKey?: string;
+  resetCode?: string;
+  resetCodeExpires?: string;
+  sessionTokens?: Record<string, { createdAt: string; expiresAt: string; deviceName?: string }>;
+  quarters: { [quarterName: string]: any[] };
+  projects: any[];
+  settings: any;
+  tombstones?: { sessionIds?: Record<string, string>; dates?: Record<string, string> };
+  lastSyncedAt: string;
+}
+
 interface UserDataStore {
-  [email: string]: {
-    quarters: { [quarterName: string]: any[] };
-    projects: any[];
-    settings: any;
-    tombstones?: { sessionIds?: Record<string, string>; dates?: Record<string, string> };
-    lastSyncedAt: string;
-  };
+  [email: string]: UserAccountRecord;
+}
+
+// Security: Native PBKDF2 Password Hashing (100,000 iterations, SHA-512, 64-byte key)
+function hashPassword(password: string, salt?: string): { hash: string; salt: string } {
+  const actualSalt = salt || crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(password, actualSalt, 100000, 64, 'sha512').toString('hex');
+  return { hash, salt: actualSalt };
+}
+
+function verifyPassword(password: string, hash: string, salt: string): boolean {
+  try {
+    const check = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+    return crypto.timingSafeEqual(Buffer.from(check, 'hex'), Buffer.from(hash, 'hex'));
+  } catch {
+    return false;
+  }
+}
+
+function generateRecoveryKey(): string {
+  const p1 = crypto.randomBytes(2).toString('hex').toUpperCase();
+  const p2 = crypto.randomBytes(2).toString('hex').toUpperCase();
+  const p3 = crypto.randomBytes(2).toString('hex').toUpperCase();
+  return `STT-${p1}-${p2}-${p3}`;
+}
+
+function generateSessionToken(): string {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+function cleanExpiredSessions(userRecord: UserAccountRecord) {
+  if (!userRecord.sessionTokens) {
+    userRecord.sessionTokens = {};
+    return;
+  }
+  const now = Date.now();
+  for (const [token, data] of Object.entries(userRecord.sessionTokens)) {
+    if (new Date(data.expiresAt).getTime() < now) {
+      delete userRecord.sessionTokens[token];
+    }
+  }
+}
+
+function verifyUserSession(email: string, token?: string): boolean {
+  if (!token) return false;
+  const normalized = email.trim().toLowerCase();
+  const user = dbStore[normalized];
+  if (!user) return false;
+  cleanExpiredSessions(user);
+  return Boolean(user.sessionTokens && user.sessionTokens[token]);
+}
+
+function extractAuthToken(req: express.Request): string | undefined {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+  const custom = req.headers['x-auth-token'];
+  if (typeof custom === 'string' && custom.trim()) {
+    return custom.trim();
+  }
+  return undefined;
+}
+
+// Mailer: Zero-cost Transactional Mailer via Nodemailer + Console Audit
+async function sendPasswordResetEmail(
+  email: string,
+  code: string,
+  recoveryKey?: string
+): Promise<{ success: boolean; error?: string; method: string }> {
+  const host = process.env.SMTP_HOST;
+  const port = parseInt(process.env.SMTP_PORT || '587', 10);
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const from = process.env.SMTP_FROM || `"Session Time Tracker" <${user || 'no-reply@session-tracker.local'}>`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #1e293b; }
+          .container { max-width: 560px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+          .header { background: #0284c7; color: #ffffff; padding: 24px; text-align: center; }
+          .header h1 { margin: 0; font-size: 20px; font-weight: 700; }
+          .header p { margin: 6px 0 0 0; font-size: 13px; opacity: 0.9; }
+          .content { padding: 28px 24px; }
+          .code-box { margin: 24px 0; padding: 20px; background: #f0f9ff; border: 2px dashed #0284c7; border-radius: 12px; text-align: center; }
+          .code-label { font-size: 11px; text-transform: uppercase; font-weight: 700; color: #0369a1; letter-spacing: 0.05em; }
+          .code-number { font-size: 36px; font-weight: 800; font-family: monospace; color: #0284c7; letter-spacing: 0.25em; margin: 8px 0; }
+          .code-exp { font-size: 11px; color: #64748b; }
+          .recovery-box { margin-top: 18px; padding: 12px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 12px; color: #475569; }
+          .footer { background: #f8fafc; padding: 16px 24px; border-top: 1px solid #e2e8f0; font-size: 11px; color: #94a3b8; text-align: center; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Reset Your Account Passphrase</h1>
+            <p>Session Time Tracker Cloud Security</p>
+          </div>
+          <div class="content">
+            <p style="margin-top: 0;">Hello,</p>
+            <p>We received a request to reset the passphrase for your Session Time Tracker account (<strong>${email}</strong>).</p>
+            <div class="code-box">
+              <div class="code-label">6-Digit Verification Code</div>
+              <div class="code-number">${code}</div>
+              <div class="code-exp">This code will expire in 15 minutes.</div>
+            </div>
+            ${recoveryKey ? `
+              <div class="recovery-box">
+                <strong>Emergency Recovery Key:</strong> <code>${recoveryKey}</code><br/>
+                <span style="font-size: 11px; color: #64748b;">You can also use this recovery key to reset your account directly if you cannot access this email in the future.</span>
+              </div>
+            ` : ''}
+            <p style="font-size: 12px; color: #64748b; margin-top: 20px;">If you did not request this code, no action is needed. Your existing passphrase remains securely protected.</p>
+          </div>
+          <div class="footer">
+            Session Time Tracker &bull; 100% Free &amp; Private Cloud Sync
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  if (host && user && pass) {
+    try {
+      const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        auth: { user, pass },
+      });
+      await transporter.sendMail({
+        from,
+        to: email,
+        subject: `Your Passphrase Reset Code: ${code} - Session Time Tracker`,
+        text: `Your 6-digit verification code is: ${code} (expires in 15 minutes). Emergency Recovery Key: ${recoveryKey || 'None'}`,
+        html,
+      });
+      console.log(`[PASSWORD RESET EMAIL SENT VIA SMTP TO ${email}]`);
+      return { success: true, method: 'SMTP Email Dispatch' };
+    } catch (smtpErr: any) {
+      console.warn(`[SMTP DISPATCH ATTEMPT FAILED]:`, smtpErr.message);
+    }
+  }
+
+  // Always log to audit console so user/developer is never locked out
+  console.log(`\n=============================================================`);
+  console.log(`[PASSWORD RESET CODE FOR ${email}]: ${code}`);
+  if (recoveryKey) console.log(`[EMERGENCY RECOVERY KEY]: ${recoveryKey}`);
+  console.log(`Valid for 15 minutes. (No SMTP required / Zero-cost local mode)`);
+  console.log(`=============================================================\n`);
+
+  return { success: true, method: 'Audit Log Dispatch' };
 }
 
 interface GlobalStats {
@@ -627,25 +792,8 @@ app.delete(['/api/suggestions/:id', '/api/feedback/:id'], (req, res) => {
 });
 
 
-// Auth Status check compatibility route
-app.get(['/api/auth/status', '/api/auth/user', '/api/auth/me', '/api/auth/session'], (req, res) => {
-  const emailHeader = req.headers['x-user-email'] as string;
-  if (emailHeader && typeof emailHeader === 'string') {
-    const normalized = emailHeader.trim().toLowerCase();
-    if (dbStore[normalized]) {
-      const userRecord = dbStore[normalized];
-      return res.json({
-        success: true,
-        user: { email: normalized, name: userRecord.settings?.userName || normalized.split('@')[0] },
-        data: userRecord,
-      });
-    }
-  }
-  res.json({ success: true, user: null, message: 'Anonymous session' });
-});
-
-// Sync Connect endpoint (Cross-device sync without requiring password/PIN)
-app.post(['/api/auth/login', '/api/auth/signin', '/api/auth/register', '/api/auth/connect'], (req, res) => {
+// Auth Check Endpoint: Check if account exists and whether it is passphrase-protected
+app.post('/api/auth/check', (req, res) => {
   const { email } = req.body;
   if (!email || typeof email !== 'string' || !email.includes('@')) {
     return res.status(400).json({ error: 'Valid email address is required.' });
@@ -655,7 +803,62 @@ app.post(['/api/auth/login', '/api/auth/signin', '/api/auth/register', '/api/aut
   const existing = dbStore[normalizedEmail];
 
   if (!existing) {
-    dbStore[normalizedEmail] = {
+    return res.json({
+      success: true,
+      email: normalizedEmail,
+      exists: false,
+      hasPassphrase: false,
+      isNewUser: true,
+    });
+  }
+
+  const hasPassphrase = Boolean(existing.passwordHash && existing.passwordSalt);
+
+  return res.json({
+    success: true,
+    email: normalizedEmail,
+    exists: true,
+    hasPassphrase,
+    isExistingUser: true,
+    hasData: Boolean(
+      (existing.projects && existing.projects.length > 0) ||
+      (existing.quarters && Object.keys(existing.quarters).length > 0)
+    ),
+  });
+});
+
+// Auth Setup Passphrase: Set initial passphrase for existing user OR brand new user
+app.post('/api/auth/setup-passphrase', (req, res) => {
+  const { email, passphrase, rememberDevice } = req.body;
+  if (!email || typeof email !== 'string' || !email.includes('@')) {
+    return res.status(400).json({ error: 'Valid email address is required.' });
+  }
+
+  if (!passphrase || typeof passphrase !== 'string' || passphrase.trim().length < 6) {
+    return res.status(400).json({ error: 'Passphrase must be at least 6 characters long.' });
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  let user = dbStore[normalizedEmail];
+
+  // If user already had a passphrase, require login or forgot-password flow
+  if (user && user.passwordHash && user.passwordSalt) {
+    return res.status(400).json({
+      error: 'A passphrase has already been configured for this account. Please sign in or use Reset Passphrase.',
+      hasPassphrase: true,
+    });
+  }
+
+  const { hash, salt } = hashPassword(passphrase.trim());
+  const recoveryKey = generateRecoveryKey();
+  const sessionToken = generateSessionToken();
+
+  const expiryDays = rememberDevice ? 30 : 1;
+  const expiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString();
+
+  if (!user) {
+    // New user initial setup
+    user = {
       quarters: {},
       projects: [],
       settings: {
@@ -672,29 +875,299 @@ app.post(['/api/auth/login', '/api/auth/signin', '/api/auth/register', '/api/aut
         soundEnabled: true,
         timeFormat24h: false,
       },
+      tombstones: { sessionIds: {}, dates: {} },
       lastSyncedAt: new Date().toISOString(),
     };
-    saveDb(dbStore);
   }
 
-  const userRecord = dbStore[normalizedEmail];
+  // Preserve all existing quarters, projects, settings, tombstones!
+  user.passwordHash = hash;
+  user.passwordSalt = salt;
+  user.recoveryKey = recoveryKey;
+  cleanExpiredSessions(user);
+  if (!user.sessionTokens) user.sessionTokens = {};
+  user.sessionTokens[sessionToken] = {
+    createdAt: new Date().toISOString(),
+    expiresAt,
+    deviceName: req.headers['user-agent']?.slice(0, 50) || 'Web Device',
+  };
+  user.lastSyncedAt = new Date().toISOString();
+
+  dbStore[normalizedEmail] = scrubSampleTraces(user);
+  saveDb(dbStore);
 
   res.json({
     success: true,
+    token: sessionToken,
+    recoveryKey,
     user: {
       email: normalizedEmail,
-      name: userRecord.settings?.userName || normalizedEmail.split('@')[0],
+      name: user.settings?.userName || normalizedEmail.split('@')[0],
     },
     data: {
-      quarters: userRecord.quarters,
-      projects: userRecord.projects,
-      settings: userRecord.settings,
-      lastSyncedAt: userRecord.lastSyncedAt,
+      quarters: user.quarters,
+      projects: user.projects,
+      settings: user.settings,
+      lastSyncedAt: user.lastSyncedAt,
     },
   });
 });
 
-// Sync GET endpoint (pull data via email without passwords/pins)
+// Auth Login endpoint (with passphrase verification and optional "remember this device" session token)
+app.post(['/api/auth/login', '/api/auth/signin'], (req, res) => {
+  const { email, passphrase, rememberDevice } = req.body;
+  if (!email || typeof email !== 'string' || !email.includes('@')) {
+    return res.status(400).json({ error: 'Valid email address is required.' });
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const user = dbStore[normalizedEmail];
+
+  if (!user) {
+    return res.status(404).json({
+      error: 'Account not found. Please create your passphrase to connect.',
+      isNewUser: true,
+    });
+  }
+
+  // If existing user has no passphrase yet, direct them to setup without losing data
+  if (!user.passwordHash || !user.passwordSalt) {
+    return res.status(200).json({
+      success: false,
+      requireSetup: true,
+      existingUser: true,
+      message: 'Account exists! Please create a passphrase to secure your cloud data.',
+    });
+  }
+
+  if (!passphrase || typeof passphrase !== 'string') {
+    return res.status(400).json({ error: 'Passphrase is required to log in.' });
+  }
+
+  const isValid = verifyPassword(passphrase.trim(), user.passwordHash, user.passwordSalt);
+  if (!isValid) {
+    return res.status(401).json({
+      error: 'Incorrect passphrase. Please try again or use Forgot Passphrase / Recovery Key.',
+    });
+  }
+
+  const sessionToken = generateSessionToken();
+  const expiryDays = rememberDevice ? 30 : 1;
+  const expiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString();
+
+  cleanExpiredSessions(user);
+  if (!user.sessionTokens) user.sessionTokens = {};
+  user.sessionTokens[sessionToken] = {
+    createdAt: new Date().toISOString(),
+    expiresAt,
+    deviceName: req.headers['user-agent']?.slice(0, 50) || 'Web Device',
+  };
+
+  if (!user.recoveryKey) {
+    user.recoveryKey = generateRecoveryKey();
+  }
+
+  dbStore[normalizedEmail] = user;
+  saveDb(dbStore);
+
+  const cleanData = scrubSampleTraces(user);
+
+  res.json({
+    success: true,
+    token: sessionToken,
+    recoveryKey: user.recoveryKey,
+    user: {
+      email: normalizedEmail,
+      name: user.settings?.userName || normalizedEmail.split('@')[0],
+    },
+    data: {
+      quarters: cleanData.quarters,
+      projects: cleanData.projects,
+      settings: cleanData.settings,
+      lastSyncedAt: user.lastSyncedAt,
+    },
+  });
+});
+
+// Auth Forgot Passphrase: Dispatches 6-digit email code (valid 15m)
+app.post('/api/auth/forgot-passphrase', async (req, res) => {
+  const { email } = req.body;
+  if (!email || typeof email !== 'string' || !email.includes('@')) {
+    return res.status(400).json({ error: 'Valid email address is required.' });
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const user = dbStore[normalizedEmail];
+  if (!user) {
+    return res.status(404).json({ error: 'No account found with this email.' });
+  }
+
+  const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+  const resetExpires = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+  user.resetCode = resetCode;
+  user.resetCodeExpires = resetExpires;
+  dbStore[normalizedEmail] = user;
+  saveDb(dbStore);
+
+  const sendResult = await sendPasswordResetEmail(normalizedEmail, resetCode, user.recoveryKey);
+
+  // In preview/dev environment or when SMTP is not configured, also provide devCode so testing is seamless
+  const hasSmtp = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER);
+
+  res.json({
+    success: true,
+    message: 'A 6-digit reset code has been generated. Please check your email or use your Emergency Recovery Key.',
+    devCode: !hasSmtp ? resetCode : undefined,
+    recoveryKeyConfigured: Boolean(user.recoveryKey),
+    method: sendResult.method,
+  });
+});
+
+// Auth Reset Passphrase: Supports 6-digit email code OR Emergency Recovery Key
+app.post('/api/auth/reset-passphrase', (req, res) => {
+  const { email, codeOrRecoveryKey, newPassphrase, rememberDevice } = req.body;
+  if (!email || !codeOrRecoveryKey || !newPassphrase) {
+    return res.status(400).json({ error: 'Email, verification code or recovery key, and new passphrase are required.' });
+  }
+
+  if (typeof newPassphrase !== 'string' || newPassphrase.trim().length < 6) {
+    return res.status(400).json({ error: 'New passphrase must be at least 6 characters long.' });
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const user = dbStore[normalizedEmail];
+  if (!user) {
+    return res.status(404).json({ error: 'Account not found.' });
+  }
+
+  const inputKey = codeOrRecoveryKey.trim().toUpperCase();
+  let isAuthorized = false;
+
+  // 1. Verify 6-digit reset code
+  if (user.resetCode && user.resetCodeExpires) {
+    const isNotExpired = new Date(user.resetCodeExpires).getTime() > Date.now();
+    if (isNotExpired && user.resetCode.trim() === inputKey) {
+      isAuthorized = true;
+    }
+  }
+
+  // 2. Verify Emergency Recovery Key
+  if (!isAuthorized && user.recoveryKey) {
+    if (user.recoveryKey.trim().toUpperCase() === inputKey) {
+      isAuthorized = true;
+    }
+  }
+
+  if (!isAuthorized) {
+    return res.status(400).json({
+      error: 'Invalid or expired verification code or recovery key. Please check again.',
+    });
+  }
+
+  // Hash new passphrase
+  const { hash, salt } = hashPassword(newPassphrase.trim());
+  user.passwordHash = hash;
+  user.passwordSalt = salt;
+  user.resetCode = undefined;
+  user.resetCodeExpires = undefined;
+
+  // Generate fresh recovery key & session token
+  const recoveryKey = generateRecoveryKey();
+  user.recoveryKey = recoveryKey;
+
+  const sessionToken = generateSessionToken();
+  const expiryDays = rememberDevice ? 30 : 1;
+  const expiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString();
+
+  cleanExpiredSessions(user);
+  if (!user.sessionTokens) user.sessionTokens = {};
+  user.sessionTokens[sessionToken] = {
+    createdAt: new Date().toISOString(),
+    expiresAt,
+    deviceName: req.headers['user-agent']?.slice(0, 50) || 'Web Device',
+  };
+
+  dbStore[normalizedEmail] = user;
+  saveDb(dbStore);
+
+  const cleanData = scrubSampleTraces(user);
+
+  res.json({
+    success: true,
+    token: sessionToken,
+    recoveryKey,
+    user: {
+      email: normalizedEmail,
+      name: user.settings?.userName || normalizedEmail.split('@')[0],
+    },
+    data: {
+      quarters: cleanData.quarters,
+      projects: cleanData.projects,
+      settings: cleanData.settings,
+      lastSyncedAt: user.lastSyncedAt,
+    },
+  });
+});
+
+// Auth Status / Session check
+app.get(['/api/auth/status', '/api/auth/user', '/api/auth/me', '/api/auth/session'], (req, res) => {
+  const token = extractAuthToken(req);
+  const emailHeader = (req.headers['x-user-email'] as string)?.trim().toLowerCase();
+
+  if (emailHeader && dbStore[emailHeader]) {
+    const user = dbStore[emailHeader];
+    const hasPass = Boolean(user.passwordHash && user.passwordSalt);
+
+    if (hasPass) {
+      if (token && verifyUserSession(emailHeader, token)) {
+        return res.json({
+          success: true,
+          authenticated: true,
+          hasPassphrase: true,
+          recoveryKey: user.recoveryKey,
+          user: { email: emailHeader, name: user.settings?.userName || emailHeader.split('@')[0] },
+          data: scrubSampleTraces(user),
+        });
+      }
+      return res.json({
+        success: true,
+        authenticated: false,
+        hasPassphrase: true,
+        message: 'Passphrase required to unlock cloud data',
+      });
+    } else {
+      // Legacy user without passphrase
+      return res.json({
+        success: true,
+        authenticated: true,
+        hasPassphrase: false,
+        user: { email: emailHeader, name: user.settings?.userName || emailHeader.split('@')[0] },
+        data: scrubSampleTraces(user),
+      });
+    }
+  }
+
+  res.json({ success: true, authenticated: false, user: null, message: 'Anonymous session' });
+});
+
+// Auth Logout Endpoint: Invalidate session token
+app.post('/api/auth/logout', (req, res) => {
+  const token = extractAuthToken(req);
+  const { email } = req.body;
+  const targetEmail = (email || (req.headers['x-user-email'] as string) || '').trim().toLowerCase();
+
+  if (targetEmail && dbStore[targetEmail] && token) {
+    const user = dbStore[targetEmail];
+    if (user.sessionTokens && user.sessionTokens[token]) {
+      delete user.sessionTokens[token];
+      saveDb(dbStore);
+    }
+  }
+  res.json({ success: true, message: 'Disconnected on this device' });
+});
+
+// Sync GET endpoint (pull data; validates passphrase session if user has a passphrase)
 app.get(['/api/sync', '/api/sync/pull', '/api/sync/get'], (req, res) => {
   const emailHeader = req.headers['x-user-email'] as string;
 
@@ -703,6 +1176,18 @@ app.get(['/api/sync', '/api/sync/pull', '/api/sync/get'], (req, res) => {
   }
   const normalizedEmail = emailHeader.trim().toLowerCase();
   const existing = dbStore[normalizedEmail];
+
+  // If user has passphrase configured, verify session token
+  if (existing && existing.passwordHash && existing.passwordSalt) {
+    const token = extractAuthToken(req);
+    if (!token || !verifyUserSession(normalizedEmail, token)) {
+      return res.status(401).json({
+        error: 'Passphrase verification required. Please unlock your account to sync.',
+        requireAuth: true,
+        hasPassphrase: true,
+      });
+    }
+  }
 
   const userData = scrubSampleTraces(
     existing || {
@@ -715,6 +1200,7 @@ app.get(['/api/sync', '/api/sync/pull', '/api/sync/get'], (req, res) => {
 
   res.json({
     success: true,
+    hasPassphrase: Boolean(existing?.passwordHash && existing?.passwordSalt),
     data: {
       quarters: userData.quarters,
       projects: userData.projects,
@@ -860,6 +1346,18 @@ app.post(['/api/sync', '/api/sync/push', '/api/sync/save'], (req, res) => {
   }
 
   const existing = dbStore[targetEmail];
+
+  // If user has a passphrase set, verify authorization token
+  if (existing && existing.passwordHash && existing.passwordSalt) {
+    const token = extractAuthToken(req);
+    if (!token || !verifyUserSession(targetEmail, token)) {
+      return res.status(401).json({
+        error: 'Passphrase verification required. Please unlock your account to sync.',
+        requireAuth: true,
+        hasPassphrase: true,
+      });
+    }
+  }
 
   const record = existing || {
     quarters: {},

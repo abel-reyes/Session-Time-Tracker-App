@@ -1,0 +1,44 @@
+{
+  "reyesabel36@gmail.com": {
+    "quarters": {
+      "Q3 2026": []
+    },
+    "projects": [
+      {
+        "id": "proj-1787768035655",
+        "name": "test",
+        "color": "#D97706",
+        "createdAt": "2026-08-26T18:13:55.655Z",
+        "updatedAt": "2026-08-26T18:13:55.655Z"
+      },
+      {
+        "id": "proj-1787768048774",
+        "name": "new 2",
+        "color": "#C2410C",
+        "createdAt": "2026-08-26T18:14:08.774Z",
+        "updatedAt": "2026-08-26T18:14:08.774Z"
+      }
+    ],
+    "settings": {
+      "appTitle": "Session Time Tracker",
+      "userName": "",
+      "userEmail": "reyesabel36@gmail.com",
+      "themeColor": "#C2410C",
+      "chartColor": "#0D9488",
+      "textSize": "default",
+      "enableGoals": true,
+      "enableProjects": true,
+      "enableStreaks": false,
+      "showFloatingClockBubble": true,
+      "weeklyGoalHours": 0,
+      "dailyGoalHours": 2,
+      "soundEnabled": true,
+      "timeFormat24h": false
+    },
+    "lastSyncedAt": "2026-09-25T14:37:22.505Z",
+    "tombstones": {
+      "sessionIds": {},
+      "dates": {}
+    }
+  }
+}

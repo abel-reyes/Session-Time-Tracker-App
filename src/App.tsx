@@ -92,6 +92,8 @@ import {
   recordDeviceVisit,
   recordDeletedSession,
   recordDeletedDate,
+  logoutAuth,
+  validateCurrentSession,
 } from './utils/storage';
 import {
   playPunchInSound,
@@ -925,41 +927,33 @@ export default function App() {
     if (settings.soundEnabled) playSuccessChime();
   };
 
-  const handleLoginWithEmail = async (email: string): Promise<{ success: boolean; error?: string }> => {
+  const handleLoginSuccess = async (email: string, token?: string) => {
     const cleanEmail = email.trim().toLowerCase();
+    const updatedSettings = { ...settings, userEmail: cleanEmail };
+    setSettings(updatedSettings);
+    saveSettings(updatedSettings);
     setSyncStatus('syncing');
     try {
       const res = await performTwoWaySync(cleanEmail);
       if (res.success) {
-        const updatedSettings = { ...settings, userEmail: cleanEmail };
-        setSettings(updatedSettings);
-        saveSettings(updatedSettings);
         setSyncStatus('synced');
         setLastSyncedAt(new Date().toISOString());
         reloadQuarterData();
         setStatusMessage({
-          text: `Connected cross-device sync as ${cleanEmail}.`,
+          text: `Account authenticated & synced as ${cleanEmail}.`,
           isError: false,
         });
-        return { success: true };
       } else {
-        const updatedSettings = { ...settings, userEmail: cleanEmail };
-        setSettings(updatedSettings);
-        saveSettings(updatedSettings);
-        setSyncStatus('synced');
-        setStatusMessage({
-          text: `Connected cross-device sync as ${cleanEmail}.`,
-          isError: false,
-        });
-        return { success: true };
+        setSyncStatus('idle');
+        reloadQuarterData();
       }
-    } catch (err: any) {
-      setSyncStatus('error');
-      return { success: false, error: err.message || 'Failed to connect to sync server' };
+    } catch {
+      setSyncStatus('idle');
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await logoutAuth(settings.userEmail);
     const updated = { ...settings, userEmail: undefined };
     setSettings(updated);
     saveSettings(updated);
@@ -1436,7 +1430,7 @@ export default function App() {
         userEmail={settings.userEmail || ''}
         syncStatus={syncStatus}
         lastSyncedAt={lastSyncedAt}
-        onLoginWithEmail={handleLoginWithEmail}
+        onLoginSuccess={handleLoginSuccess}
         onLogout={handleLogout}
         onManualSync={triggerAutoSync}
         themeColor={settings.themeColor || '#0284C7'}
@@ -1510,6 +1504,7 @@ export default function App() {
         onDataReload={reloadQuarterData}
         onOpenGiftModal={() => setIsGiftModalOpen(true)}
         onOpenWidgetGuide={() => setIsWidgetGuideOpen(true)}
+        onOpenAuthModal={() => setIsAuthModalOpen(true)}
         onSyncRefresh={handleSyncAndRefresh}
         initialTab={settingsInitialTab}
       />

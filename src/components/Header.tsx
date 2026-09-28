@@ -16,7 +16,8 @@ import {
   BarChart3,
   ListTodo,
   RefreshCw,
-  Smartphone
+  Smartphone,
+  Lock
 } from 'lucide-react';
 import { getQuarterName } from '../utils/timeCalculations';
 import { SyncStatusType } from '../types';
@@ -243,7 +244,7 @@ export function Header({
                   ? 'text-emerald-900 bg-emerald-50 border-emerald-200 hover:bg-emerald-100'
                   : 'text-slate-700 bg-white border-slate-200 hover:bg-slate-50'
               }`}
-              title={isLoggedIn ? `Cross-device sync active for ${userEmail}` : 'Cross-Device Sync: Enter email to sync across devices (no sign-in needed)'}
+              title={isLoggedIn ? `Passphrase-protected sync active for ${userEmail}` : 'Passphrase-Protected Cloud Sync: Log in or create passphrase'}
             >
               {isLoggedIn ? (
                 <span 
@@ -253,10 +254,10 @@ export function Header({
                   {userEmail![0]?.toUpperCase()}
                 </span>
               ) : (
-                <Cloud className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                <Lock className="w-3 h-3 text-slate-400 shrink-0" />
               )}
               <span className="max-w-[70px] sm:max-w-[100px] truncate">
-                {isLoggedIn ? userEmail?.split('@')[0] : 'Cloud Sync'}
+                {isLoggedIn ? userEmail?.split('@')[0] : 'Sign In'}
               </span>
             </button>
 

@@ -1,4 +1,4 @@
-import { DayRecord, AppSettings, QuarterData, Project, SuggestionTicket, SuggestionStatus, SyncTombstones, PunchPair } from '../types';
+import { DayRecord, AppSettings, QuarterData, Project, SuggestionTicket, SuggestionStatus, SyncTombstones, PunchPair, AuthCheckResult } from '../types';
 import { getQuarterName, formatDateToYYYYMMDD, createEmptyPunches, getTodayMondayDate, normalizeTimeStr } from './timeCalculations';
 
 export const CREATOR_EMAIL = 'reyesabel36@gmail.com';
@@ -7,6 +7,10 @@ const STORAGE_KEYS = {
   SETTINGS: 'stt_settings_v2',
   PROJECTS: 'stt_projects_v2',
   USER_EMAIL: 'stt_user_email_v2',
+  AUTH_TOKEN: 'stt_auth_token_v2',
+  RECOVERY_KEY: 'stt_recovery_key_v2',
+  REMEMBER_DEVICE: 'stt_remember_device_v2',
+  HAS_PASSPHRASE: 'stt_has_passphrase_v2',
   QUARTERS_PREFIX: 'stt_quarter_',
   ACTIVE_QUARTER: 'stt_active_quarter',
   SAMPLE_SEEDED: 'stt_sample_seeded_v2',
@@ -113,6 +117,275 @@ export function saveUserEmail(email: string): void {
   } catch {
     // Ignore
   }
+}
+
+export function loadAuthToken(): string {
+  try {
+    return localStorage.getItem(STORAGE_KEYS.AUTH_TOKEN) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function saveAuthToken(token: string): void {
+  try {
+    if (token) {
+      localStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, token);
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+export function clearAuthToken(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+  } catch {
+    // Ignore
+  }
+}
+
+export function loadRecoveryKey(): string {
+  try {
+    return localStorage.getItem(STORAGE_KEYS.RECOVERY_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function saveRecoveryKey(key: string): void {
+  try {
+    if (key) {
+      localStorage.setItem(STORAGE_KEYS.RECOVERY_KEY, key);
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.RECOVERY_KEY);
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+export function loadRememberDevice(): boolean {
+  try {
+    const val = localStorage.getItem(STORAGE_KEYS.REMEMBER_DEVICE);
+    return val !== 'false'; // default true
+  } catch {
+    return true;
+  }
+}
+
+export function saveRememberDevice(remember: boolean): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.REMEMBER_DEVICE, remember ? 'true' : 'false');
+  } catch {
+    // Ignore
+  }
+}
+
+export function loadHasPassphrase(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_KEYS.HAS_PASSPHRASE) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function saveHasPassphrase(hasPass: boolean): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.HAS_PASSPHRASE, hasPass ? 'true' : 'false');
+  } catch {
+    // Ignore
+  }
+}
+
+// Auth API Network Functions
+export async function checkEmailAuth(email: string): Promise<AuthCheckResult> {
+  const res = await fetch('/api/auth/check', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: email.trim().toLowerCase() }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Server responded with ${res.status}`);
+  }
+  return await res.json();
+}
+
+export async function setupPassphrase(
+  email: string,
+  passphrase: string,
+  rememberDevice: boolean = true
+): Promise<{ success: boolean; token?: string; recoveryKey?: string; user?: any; data?: any; error?: string }> {
+  try {
+    const res = await fetch('/api/auth/setup-passphrase', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: email.trim().toLowerCase(),
+        passphrase,
+        rememberDevice,
+      }),
+    });
+    const json = await res.json();
+    if (!res.ok || !json.success) {
+      return { success: false, error: json.error || 'Failed to set up passphrase' };
+    }
+    if (json.token) saveAuthToken(json.token);
+    if (json.recoveryKey) saveRecoveryKey(json.recoveryKey);
+    saveUserEmail(email);
+    saveRememberDevice(rememberDevice);
+    saveHasPassphrase(true);
+    return json;
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Connection error during passphrase setup' };
+  }
+}
+
+export async function loginWithPassphrase(
+  email: string,
+  passphrase: string,
+  rememberDevice: boolean = true
+): Promise<{ success: boolean; token?: string; recoveryKey?: string; requireSetup?: boolean; existingUser?: boolean; user?: any; data?: any; error?: string }> {
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: email.trim().toLowerCase(),
+        passphrase,
+        rememberDevice,
+      }),
+    });
+    const json = await res.json();
+    if (!res.ok || !json.success) {
+      return {
+        success: false,
+        requireSetup: json.requireSetup,
+        existingUser: json.existingUser,
+        error: json.error || 'Invalid credentials',
+      };
+    }
+    if (json.token) saveAuthToken(json.token);
+    if (json.recoveryKey) saveRecoveryKey(json.recoveryKey);
+    saveUserEmail(email);
+    saveRememberDevice(rememberDevice);
+    saveHasPassphrase(true);
+    return json;
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Connection error during login' };
+  }
+}
+
+export async function requestPasswordReset(
+  email: string
+): Promise<{ success: boolean; message?: string; devCode?: string; recoveryKeyConfigured?: boolean; error?: string }> {
+  try {
+    const res = await fetch('/api/auth/forgot-passphrase', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.trim().toLowerCase() }),
+    });
+    const json = await res.json();
+    if (!res.ok || !json.success) {
+      return { success: false, error: json.error || 'Failed to request reset' };
+    }
+    return json;
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Connection error requesting password reset' };
+  }
+}
+
+export async function resetPassphraseWithCode(
+  email: string,
+  codeOrRecoveryKey: string,
+  newPassphrase: string,
+  rememberDevice: boolean = true
+): Promise<{ success: boolean; token?: string; recoveryKey?: string; user?: any; data?: any; error?: string }> {
+  try {
+    const res = await fetch('/api/auth/reset-passphrase', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: email.trim().toLowerCase(),
+        codeOrRecoveryKey: codeOrRecoveryKey.trim().toUpperCase(),
+        newPassphrase,
+        rememberDevice,
+      }),
+    });
+    const json = await res.json();
+    if (!res.ok || !json.success) {
+      return { success: false, error: json.error || 'Failed to reset passphrase' };
+    }
+    if (json.token) saveAuthToken(json.token);
+    if (json.recoveryKey) saveRecoveryKey(json.recoveryKey);
+    saveUserEmail(email);
+    saveRememberDevice(rememberDevice);
+    saveHasPassphrase(true);
+    return json;
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Connection error during reset' };
+  }
+}
+
+export async function logoutAuth(email?: string): Promise<void> {
+  const token = loadAuthToken();
+  const targetEmail = email || loadUserEmail();
+  try {
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ email: targetEmail }),
+    });
+  } catch {
+    // Ignore offline errors
+  }
+  clearAuthToken();
+  saveUserEmail('');
+}
+
+export async function validateCurrentSession(): Promise<{
+  authenticated: boolean;
+  hasPassphrase?: boolean;
+  user?: any;
+  recoveryKey?: string;
+  data?: any;
+}> {
+  const token = loadAuthToken();
+  const email = loadUserEmail();
+  if (!email) return { authenticated: false };
+
+  try {
+    const headers: Record<string, string> = {
+      'x-user-email': email,
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+      headers['x-auth-token'] = token;
+    }
+    const res = await fetch('/api/auth/session', { headers });
+    if (res.ok) {
+      const json = await res.json();
+      if (json.recoveryKey) {
+        saveRecoveryKey(json.recoveryKey);
+      }
+      if (json.hasPassphrase !== undefined) {
+        saveHasPassphrase(json.hasPassphrase);
+      }
+      return json;
+    }
+  } catch {
+    // Offline mode: if we have a token stored and rememberDevice is true, treat as offline authenticated!
+    if (token) {
+      return { authenticated: true, hasPassphrase: loadHasPassphrase(), user: { email } };
+    }
+  }
+  return { authenticated: false };
 }
 
 export function loadProjects(includeDeleted: boolean = false): Project[] {
@@ -497,7 +770,7 @@ export async function syncWithServer(
   localQuarters?: Record<string, DayRecord[]>,
   localProjects?: Project[],
   localSettings?: AppSettings
-): Promise<{ success: boolean; data?: any; error?: string }> {
+): Promise<{ success: boolean; data?: any; error?: string; requireAuth?: boolean }> {
   if (!email || !email.includes('@')) {
     return { success: false, error: 'No valid user email for sync' };
   }
@@ -519,12 +792,19 @@ export async function syncWithServer(
 
   try {
     const localTombstones = loadTombstones();
+    const token = loadAuthToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-user-email': email.trim().toLowerCase(),
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+      headers['x-auth-token'] = token;
+    }
+
     const res = await fetch('/api/sync', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-email': email.trim().toLowerCase(),
-      },
+      headers,
       signal: controller.signal,
       body: JSON.stringify({
         email: email.trim().toLowerCase(),
@@ -536,6 +816,15 @@ export async function syncWithServer(
     });
 
     clearTimeout(timeoutId);
+
+    if (res.status === 401) {
+      const errJson = await res.json().catch(() => ({}));
+      return {
+        success: false,
+        requireAuth: true,
+        error: errJson.error || 'Passphrase verification required to sync cloud data.',
+      };
+    }
 
     if (!res.ok) {
       throw new Error(`Sync API responded with status ${res.status}`);
@@ -579,7 +868,7 @@ export async function syncWithServer(
 
 export async function pullFromServer(
   email: string
-): Promise<{ success: boolean; data?: any; error?: string }> {
+): Promise<{ success: boolean; data?: any; error?: string; requireAuth?: boolean }> {
   if (!email || !email.includes('@')) {
     return { success: false, error: 'No email provided' };
   }
@@ -588,15 +877,30 @@ export async function pullFromServer(
   const timeoutId = setTimeout(() => controller.abort(), 10000);
 
   try {
+    const token = loadAuthToken();
+    const headers: Record<string, string> = {
+      'x-user-email': email.trim().toLowerCase(),
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+      headers['x-auth-token'] = token;
+    }
+
     const res = await fetch('/api/sync', {
       method: 'GET',
-      headers: {
-        'x-user-email': email.trim().toLowerCase(),
-      },
+      headers,
       signal: controller.signal,
     });
 
     clearTimeout(timeoutId);
+
+    if (res.status === 401) {
+      const errJson = await res.json().catch(() => ({}));
+      return {
+        success: false,
+        error: errJson.error || 'Passphrase verification required to sync cloud data.',
+      };
+    }
 
     if (!res.ok) {
       throw new Error(`Pull API responded with status ${res.status}`);
