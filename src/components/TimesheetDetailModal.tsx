@@ -60,6 +60,7 @@ export function TimesheetDetailModal({
   const [newRowDate, setNewRowDate] = useState<string>(formatDateToYYYYMMDD(new Date()));
   const [isCsvMenuOpen, setIsCsvMenuOpen] = useState<boolean>(false);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogOptions | null>(null);
+  const [removedMultiDayPunches, setRemovedMultiDayPunches] = useState<PunchPair[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
@@ -99,8 +100,6 @@ export function TimesheetDetailModal({
     // While actively editing, make sure the user can see all active slots they are filling
     maxPopulatedSlots = Math.max(maxPopulatedSlots, editForm.punches.length);
   }
-
-  const [removedMultiDayPunches, setRemovedMultiDayPunches] = useState<PunchPair[]>([]);
 
   // Minimum 1 session column so the table is always structured and valid
   const maxSlots = Math.max(maxPopulatedSlots, 1);
