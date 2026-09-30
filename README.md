@@ -42,8 +42,7 @@ A modern, high-precision session timestamp tracker and productivity analytics pl
 
 ### High-Precision Punch Clock
 - **Live Elapsed Timer**: Real-time ticker with smooth updates and millisecond precision.
-- **Live Active Session Sync**: Editing the Clock-In start time of an active running session immediately recalculates and synchronizes the live elapsed time across both the main card and floating timer drawer without resetting to zero or requiring a page reload.
-- **Robust Multi-Format Time Normalization**: Universal time parsing (`normalizeTimeToHHMMSS`) supporting 12-hour AM/PM and 24-hour formats with automatic second-padding across all session editing interfaces.
+- **Robust Multi-Format Time Normalization**: Universal time parsing supporting 12-hour AM/PM and 24-hour formats with automatic second-padding across all session editing interfaces.
 - **Indefinite Daily Sessions**: Track an unlimited number of punch-in / punch-out sessions throughout the day, dynamically expanding beyond traditional fixed daily punch limits.
 - **Overnight & Multi-Day Tracking**: Tracks sessions past midnight or across multiple days with a continuous live timer, automatically partitioning hours across calendar dates for accurate daily analytics.
 - **Retroactive Session Entry**: Add historical time logs with precise start and stop timestamps, custom calendar dates, and customizable session notes.
@@ -52,7 +51,7 @@ A modern, high-precision session timestamp tracker and productivity analytics pl
 ### Multi-Project Organization & Categorization
 - **Color-Coded Projects**: Categorize time entries across client and internal projects with custom color tags.
 - **Billable Rates & Invoicing**: Assign optional hourly billable rates per project to compute billable sums and client totals in real time.
-- **Collapsible Billing Calculator by Date**: Filter project sessions across customizable date ranges (*All Time*, *This Month*, *Last Month*, *This Quarter*, *Last 30 Days*, or custom dates). Generates formatted client invoice summaries, billable hour totals, and itemized daily breakdowns with 1-click clipboard copying and CSV export. The accordion intelligently defaults closed upon opening the project modal while maintaining sticky state when switching between projects.
+- **Collapsible Billing Calculator by Date**: Filter project sessions across customizable date ranges. Generates formatted client invoice summaries, billable hour totals, and itemized daily breakdowns with 1-click clipboard copying and CSV export.
 - **Project Filtering & Objectives**: Filter timesheet logs and metrics by specific projects to evaluate focused effort and monitor accomplished objectives.
 - **Punch Session Management**: Inspect, edit, reassign, or remove recorded session pairs directly from project detail logs and timesheet auditors.
 - **Quick Project Badges**: Rapid switching and assigning active sessions directly from the clock interface.
