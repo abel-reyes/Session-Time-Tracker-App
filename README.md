@@ -1,3 +1,4 @@
+[Live Demo](https://sessiontime-tracker.ai.studio)
 # Session Time Tracker
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue.svg?logo=typescript)](https://www.typescriptlang.org/)
