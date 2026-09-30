@@ -42,6 +42,7 @@ interface FloatingClockBubbleProps {
   position?: 'bottom-left' | 'bottom-right';
   onTogglePosition?: () => void;
   onNavigateToClockTab?: () => void;
+  liveElapsedSeconds?: number;
 }
 
 export function FloatingClockBubble({
@@ -60,9 +61,12 @@ export function FloatingClockBubble({
   position = 'bottom-left',
   onTogglePosition,
   onNavigateToClockTab,
+  liveElapsedSeconds,
 }: FloatingClockBubbleProps) {
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [sessionSeconds, setSessionSeconds] = useState<number>(0);
+
+  const currentElapsed = liveElapsedSeconds !== undefined ? liveElapsedSeconds : sessionSeconds;
   const [activeNote, setActiveNote] = useState<string>('');
   const [localSelectedProj, setLocalSelectedProj] = useState<string>(selectedProjectId || projects[0]?.id || '');
   const [statusBanner, setStatusBanner] = useState<{ text: string; isError: boolean } | null>(null);
@@ -156,7 +160,7 @@ export function FloatingClockBubble({
               : 'h-11 w-11 sm:w-auto sm:px-3 gap-1.5'
           }`}
           style={{ backgroundColor: themeColor }}
-          title={isPunchedIn ? `Active Session: ${formatSecondsToHHMMSS(sessionSeconds)} (Click to open quick clock)` : 'Click to open quick clock drawer'}
+          title={isPunchedIn ? `Active Session: ${formatSecondsToHHMMSS(currentElapsed)} (Click to open quick clock)` : 'Click to open quick clock drawer'}
           aria-label="Open Quick Clock"
         >
           {/* Active session pulsing indicator inside button */}
@@ -174,10 +178,10 @@ export function FloatingClockBubble({
           {/* Mini Live Timer - Single-line horizontal layout so height never expands upward */}
           {isPunchedIn ? (
             <div className="flex items-center gap-1 font-mono text-xs font-black tracking-tight leading-none pr-0.5">
-              <span>{formatSecondsToHHMMSS(sessionSeconds)}</span>
+              <span>{formatSecondsToHHMMSS(currentElapsed)}</span>
               {isMultiDay && (
                 <span className="text-[8px] bg-white/30 px-1 py-0.2 rounded-xs font-sans font-bold">
-                  +{Math.max(1, Math.floor(sessionSeconds / 86400))}d
+                  +{Math.max(1, Math.floor(currentElapsed / 86400))}d
                 </span>
               )}
             </div>
@@ -296,10 +300,10 @@ export function FloatingClockBubble({
                         )}
                       </div>
                       <div className="font-mono text-2xl font-black text-emerald-700 tracking-tight leading-none flex items-baseline gap-1">
-                        <span>{formatSecondsToHHMMSS(sessionSeconds)}</span>
-                        {sessionSeconds >= 86400 && (
+                        <span>{formatSecondsToHHMMSS(currentElapsed)}</span>
+                        {currentElapsed >= 86400 && (
                           <span className="text-xs font-bold text-indigo-600">
-                            (+{Math.floor(sessionSeconds / 86400)}d)
+                            (+{Math.floor(currentElapsed / 86400)}d)
                           </span>
                         )}
                       </div>

@@ -1,7 +1,7 @@
 // Application Version Configuration
 // Semantic Versioning for Session Time Tracker
-export const APP_VERSION = '2.9.4';
-export const APP_BUILD_DATE = '2026-09-27';
+export const APP_VERSION = '2.10.1';
+export const APP_BUILD_DATE = '2026-09-30';
 
 /**
  * Formats an ISO publication timestamp into a human-readable string.

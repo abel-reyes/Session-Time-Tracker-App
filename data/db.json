@@ -1,7 +1,40 @@
 {
   "reyesabel36@gmail.com": {
     "quarters": {
-      "Q3 2026": []
+      "Q3 2026": [
+        {
+          "date": "2026-09-27",
+          "punches": [
+            {
+              "inTime": "08:43:00",
+              "outTime": "08:50:00",
+              "projectId": "proj-1787768035655",
+              "projectName": "test"
+            },
+            {
+              "inDate": "2026-09-27",
+              "inTime": "21:08:18",
+              "outTime": "21:12:48",
+              "sessionId": "sess_1790557698581_aq5y5c",
+              "projectId": "proj-1787768035655",
+              "projectName": "test",
+              "outDate": "2026-09-27",
+              "totalSessionSeconds": 270
+            },
+            {
+              "inDate": "2026-09-27",
+              "inTime": "21:12:56",
+              "outTime": "21:29:22",
+              "sessionId": "sess_1790557976253_jtg487",
+              "projectId": "proj-1787768035655",
+              "projectName": "test",
+              "outDate": "2026-09-27",
+              "totalSessionSeconds": 986
+            }
+          ],
+          "updatedAt": "2026-09-28T00:47:23.562Z"
+        }
+      ]
     },
     "projects": [
       {
@@ -9,7 +42,8 @@
         "name": "test",
         "color": "#D97706",
         "createdAt": "2026-08-26T18:13:55.655Z",
-        "updatedAt": "2026-08-26T18:13:55.655Z"
+        "updatedAt": "2026-09-28T00:11:49.810Z",
+        "billableRate": 0
       },
       {
         "id": "proj-1787768048774",
@@ -33,9 +67,10 @@
       "weeklyGoalHours": 0,
       "dailyGoalHours": 2,
       "soundEnabled": true,
-      "timeFormat24h": false
+      "timeFormat24h": false,
+      "floatingClockPosition": "bottom-right"
     },
-    "lastSyncedAt": "2026-09-25T14:37:22.505Z",
+    "lastSyncedAt": "2026-09-29T16:56:11.356Z",
     "tombstones": {
       "sessionIds": {},
       "dates": {}

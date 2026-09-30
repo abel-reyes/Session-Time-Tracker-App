@@ -22,7 +22,8 @@ import {
   formatDateToYYYYMMDD, 
   formatDateMMDDYYYY,
   parseCSVToRecordsAndProjects,
-  deleteSessionFromRecords
+  deleteSessionFromRecords,
+  normalizeTimeToHHMMSS
 } from '../utils/timeCalculations';
 import { recordDeletedSession, recordDeletedDate } from '../utils/storage';
 import { ConfirmModal, ConfirmDialogOptions } from './ConfirmModal';
@@ -133,10 +134,16 @@ export function TimesheetDetailModal({
 
   const handleSaveEdit = () => {
     if (!editForm) return;
-    // Clean up empty punches so ghost blank pairs are removed
-    const cleanPunches = (editForm.punches || []).filter(
-      (p) => Boolean(p.inTime && p.inTime.trim() !== '') || Boolean(p.outTime && p.outTime.trim() !== '')
-    );
+    // Clean up empty punches so ghost blank pairs are removed and normalize time strings
+    const cleanPunches = (editForm.punches || [])
+      .filter(
+        (p) => Boolean(p.inTime && p.inTime.trim() !== '') || Boolean(p.outTime && p.outTime.trim() !== '')
+      )
+      .map((p) => ({
+        ...p,
+        inTime: p.inTime?.trim() ? normalizeTimeToHHMMSS(p.inTime) : '',
+        outTime: p.outTime?.trim() ? normalizeTimeToHHMMSS(p.outTime) : '',
+      }));
     const updatedRecord: DayRecord = {
       ...editForm,
       punches: cleanPunches,

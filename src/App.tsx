@@ -70,6 +70,7 @@ import {
   generateQuarterCSV,
   deleteSessionFromRecords,
   generateSessionId,
+  normalizeTimeToHHMMSS,
 } from './utils/timeCalculations';
 import {
   loadSettings,
@@ -442,14 +443,15 @@ export default function App() {
 
     if (activeOpenPunch && activeOpenPunch.inTime && activeRecordDate) {
       const isMultiDay = activeRecordDate !== todayStr;
+      const cleanInTime = normalizeTimeToHHMMSS(activeOpenPunch.inTime);
       return {
         isPunchedIn: true,
-        activeInTime: activeOpenPunch.inTime,
+        activeInTime: cleanInTime,
         activeInDate: activeRecordDate,
         activeProjectId: activeOpenPunch.projectId,
         activeProjectName: activeOpenPunch.projectName,
         activeNote: activeOpenPunch.note,
-        lastPunchTime: activeOpenPunch.inTime,
+        lastPunchTime: cleanInTime,
         activeSlotIndex: activeSlot,
         isMultiDay,
       };
@@ -1320,6 +1322,7 @@ export default function App() {
               onDismissStatus={() => setStatusMessage(null)}
               themeColor={settings.themeColor || '#0284C7'}
               secondaryColor={settings.chartColor || '#0F172A'}
+              liveElapsedSeconds={liveElapsedSeconds}
               onOpenPastDateModal={() => {
                 setSelectedPastDate(formatDateToYYYYMMDD(new Date()));
                 setIsPastDateModalOpen(true);
@@ -1531,6 +1534,7 @@ export default function App() {
           lastPunchTime={punchState.lastPunchTime}
           themeColor={settings.themeColor || '#0284C7'}
           secondaryColor={settings.chartColor || '#0F172A'}
+          liveElapsedSeconds={liveElapsedSeconds}
           position={settings.floatingClockPosition || 'bottom-left'}
           onTogglePosition={() => {
             const nextPos = (settings.floatingClockPosition || 'bottom-left') === 'bottom-left' ? 'bottom-right' : 'bottom-left';

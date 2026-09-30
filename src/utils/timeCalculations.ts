@@ -55,6 +55,68 @@ export function parseTimeToSeconds(val?: string | null): number {
   return h * 3600 + m * 60 + s;
 }
 
+/**
+ * Normalizes any time string into strict "HH:mm:ss" 24-hour format.
+ * Supports:
+ * - 24h: "9:00", "09:00", "9:00:00", "09:00:00"
+ * - 12h: "9:00 AM", "09:00 AM", "1:30 PM", "01:30 PM", "12:00 AM", "12:00 PM"
+ * - Whitespace trimmed
+ */
+export function normalizeTimeToHHMMSS(val?: string | null): string {
+  if (!val) return '';
+  const s = val.trim();
+  if (!s) return '';
+
+  // 1. 12-hour format with AM/PM (e.g. "9:15 AM", "09:15:30 pm", "1:00pm")
+  const m12 = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)$/i);
+  if (m12) {
+    let h = parseInt(m12[1], 10);
+    const m = parseInt(m12[2], 10);
+    const sec = m12[3] ? parseInt(m12[3], 10) : 0;
+    const isPm = m12[4].toLowerCase() === 'pm';
+    if (isPm && h < 12) h += 12;
+    if (!isPm && h === 12) h = 0;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${pad(h)}:${pad(m)}:${pad(sec)}`;
+  }
+
+  // 2. 24-hour format (e.g. "9:15", "09:15", "9:15:30", "09:15:30")
+  const m24 = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (m24) {
+    const h = parseInt(m24[1], 10);
+    const m = parseInt(m24[2], 10);
+    const sec = m24[3] ? parseInt(m24[3], 10) : 0;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${pad(h)}:${pad(m)}:${pad(sec)}`;
+  }
+
+  return s;
+}
+
+/**
+ * Parses date string ("YYYY-MM-DD") and time string ("HH:mm" / "HH:mm:ss" / "H:mm AM")
+ * into a valid local Date instance using explicit integer components to prevent browser parsing discrepancies.
+ */
+export function parseDateTimeToDate(dateStr?: string | null, timeStr?: string | null): Date | null {
+  if (!dateStr || !timeStr) return null;
+  const normTime = normalizeTimeToHHMMSS(timeStr);
+  if (!normTime) return null;
+  const tParts = normTime.split(':').map((p) => parseInt(p, 10));
+  if (tParts.length < 2 || isNaN(tParts[0]) || isNaN(tParts[1])) return null;
+  const hours = tParts[0];
+  const minutes = tParts[1];
+  const seconds = tParts[2] && !isNaN(tParts[2]) ? tParts[2] : 0;
+
+  const dParts = dateStr.trim().split('-').map((p) => parseInt(p, 10));
+  if (dParts.length !== 3 || isNaN(dParts[0]) || isNaN(dParts[1]) || isNaN(dParts[2])) return null;
+  const year = dParts[0];
+  const month = dParts[1] - 1; // 0-indexed month
+  const day = dParts[2];
+
+  const d = new Date(year, month, day, hours, minutes, seconds);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 export function getDurationInSeconds(
   inVal?: string | null,
   outVal?: string | null,
@@ -63,20 +125,21 @@ export function getDurationInSeconds(
 ): number {
   if (!inVal || !outVal) return 0;
 
+  const normIn = normalizeTimeToHHMMSS(inVal);
+  const normOut = normalizeTimeToHHMMSS(outVal);
+
   // If explicit dates are provided and differ, compute accurate multi-day difference
   if (inDate && outDate) {
-    const inFull = inVal.length === 5 ? `${inVal}:00` : inVal;
-    const outFull = outVal.length === 5 ? `${outVal}:00` : outVal;
-    const start = new Date(`${inDate}T${inFull}`);
-    const end = new Date(`${outDate}T${outFull}`);
-    if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+    const start = parseDateTimeToDate(inDate, normIn);
+    const end = parseDateTimeToDate(outDate, normOut);
+    if (start && end) {
       const diffSec = Math.floor((end.getTime() - start.getTime()) / 1000);
       return Math.max(0, diffSec);
     }
   }
 
-  const inSec = parseTimeToSeconds(inVal);
-  const outSec = parseTimeToSeconds(outVal);
+  const inSec = parseTimeToSeconds(normIn);
+  const outSec = parseTimeToSeconds(normOut);
 
   // If outSec is less than inSec and no dates were passed, it crossed midnight (+24h)
   if (outSec < inSec) {
@@ -88,6 +151,8 @@ export function getDurationInSeconds(
 
 /**
  * Calculates live elapsed seconds for an active session, even if it started days ago.
+ * Parses dates & times using robust year/month/day/hour/minute/second integers to prevent
+ * browser string parsing errors, handles single digit hours, 12h/24h formats, and overnight shifts.
  */
 export function getActiveElapsedSeconds(
   inDateStr?: string | null,
@@ -95,11 +160,46 @@ export function getActiveElapsedSeconds(
   now: Date = new Date()
 ): number {
   if (!inTimeStr) return 0;
+  
+  const normTime = normalizeTimeToHHMMSS(inTimeStr);
+  if (!normTime) return 0;
+
+  const timeParts = normTime.split(':').map((p) => parseInt(p, 10));
+  if (timeParts.length < 2 || isNaN(timeParts[0]) || isNaN(timeParts[1])) return 0;
+  const hours = timeParts[0];
+  const minutes = timeParts[1];
+  const seconds = timeParts[2] && !isNaN(timeParts[2]) ? timeParts[2] : 0;
+
+  let year = now.getFullYear();
+  let month = now.getMonth();
+  let day = now.getDate();
+
   const inDate = inDateStr || formatDateToYYYYMMDD(now);
-  const inFull = inTimeStr.length === 5 ? `${inTimeStr}:00` : inTimeStr;
-  const start = new Date(`${inDate}T${inFull}`);
+  if (inDate) {
+    const dateParts = inDate.split('-').map((p) => parseInt(p, 10));
+    if (dateParts.length === 3 && !isNaN(dateParts[0]) && !isNaN(dateParts[1]) && !isNaN(dateParts[2])) {
+      year = dateParts[0];
+      month = dateParts[1] - 1;
+      day = dateParts[2];
+    }
+  }
+
+  const start = new Date(year, month, day, hours, minutes, seconds);
   if (isNaN(start.getTime())) return 0;
-  const diffMs = now.getTime() - start.getTime();
+
+  let diffMs = now.getTime() - start.getTime();
+
+  // If start is in the future compared to now:
+  // Check if it's an overnight session where the user clocked in late yesterday (e.g. 23:30)
+  // but inDate defaulted to today (e.g. 01:15 AM now):
+  if (diffMs < 0 && (!inDateStr || inDateStr === formatDateToYYYYMMDD(now))) {
+    const yesterdayStart = new Date(year, month, day - 1, hours, minutes, seconds);
+    const yesterdayDiffMs = now.getTime() - yesterdayStart.getTime();
+    if (yesterdayDiffMs >= 0) {
+      diffMs = yesterdayDiffMs;
+    }
+  }
+
   return Math.max(0, Math.floor(diffMs / 1000));
 }
 
@@ -224,13 +324,11 @@ export function splitMultiDaySession(
 }
 
 /**
- * Normalizes time strings (e.g. "09:00" -> "09:00:00") for reliable equality checks.
+ * Normalizes time strings (e.g. "09:00", "9:00", "9:00 AM" -> "09:00:00") for reliable equality checks and storage.
  */
 export function normalizeTimeStr(t?: string | null): string {
   if (!t) return '';
-  const trimmed = t.trim();
-  if (trimmed.length === 5) return `${trimmed}:00`;
-  return trimmed;
+  return normalizeTimeToHHMMSS(t);
 }
 
 /**
@@ -406,7 +504,8 @@ export function formatDecimalHoursTo12H(dec: number): string {
 
 export function formatTime24to12(time24?: string | null): string {
   if (!time24) return '--';
-  const parts = time24.split(':');
+  const norm = normalizeTimeToHHMMSS(time24);
+  const parts = (norm || time24).split(':');
   if (parts.length < 2) return time24;
   const h = parseInt(parts[0], 10);
   const m = parts[1];

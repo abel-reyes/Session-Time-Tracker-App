@@ -1,4 +1,4 @@
-import { useState, useRef, ChangeEvent, FormEvent } from 'react';
+import { useState, useRef, useEffect, ChangeEvent, FormEvent } from 'react';
 import { 
   FolderKanban, 
   Plus, 
@@ -16,17 +16,25 @@ import {
   Tag,
   Download,
   Upload,
-  ChevronDown
+  ChevronDown,
+  ChevronUp,
+  Calculator,
+  Copy,
+  RotateCcw,
+  FileSpreadsheet,
+  Filter
 } from 'lucide-react';
 import { Project, DayRecord, PunchPair } from '../types';
 import { 
   formatSecondsToHuman, 
   formatSecondsToHHMMSS, 
   formatDateMMDDYYYY, 
+  formatDateToYYYYMMDD,
   formatTime24to12,
   getDurationInSeconds,
   parseCSVToRecordsAndProjects,
-  deleteSessionFromRecords
+  deleteSessionFromRecords,
+  normalizeTimeToHHMMSS
 } from '../utils/timeCalculations';
 import { recordDeletedSession } from '../utils/storage';
 import { ConfirmModal, ConfirmDialogOptions } from './ConfirmModal';
@@ -91,7 +99,26 @@ export function ProjectsModal({
   const [editLogProjectId, setEditLogProjectId] = useState<string>('');
   const [editLogNote, setEditLogNote] = useState<string>('');
 
+  // Date Range Aggregation & Billing Filter State
+  const [isAggregatorExpanded, setIsAggregatorExpanded] = useState<boolean>(false);
+  const [isFiltersExpanded, setIsFiltersExpanded] = useState<boolean>(false);
+  const [rangePreset, setRangePreset] = useState<'all' | 'this-month' | 'last-month' | 'this-quarter' | 'last-30' | 'custom'>('all');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+  const [copiedInvoice, setCopiedInvoice] = useState<boolean>(false);
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const prevIsOpenRef = useRef<boolean>(false);
+
+  // Default Billing Calculator to closed only when the projects window opens from a closed state.
+  // When switching between projects while the window remains open, keep the user's expanded state.
+  useEffect(() => {
+    if (isOpen && !prevIsOpenRef.current) {
+      setIsAggregatorExpanded(false);
+      setIsFiltersExpanded(false);
+    }
+    prevIsOpenRef.current = isOpen;
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -244,10 +271,8 @@ export function ProjectsModal({
     const oldRecIdx = updated.findIndex((r) => r.date === log.date);
     if (oldRecIdx === -1) return;
 
-    let formattedIn = editLogInTime.trim();
-    if (formattedIn.length === 5) formattedIn += ':00';
-    let formattedOut = editLogOutTime.trim();
-    if (formattedOut.length === 5) formattedOut += ':00';
+    const formattedIn = editLogInTime.trim() ? normalizeTimeToHHMMSS(editLogInTime.trim()) : '';
+    const formattedOut = editLogOutTime.trim() ? normalizeTimeToHHMMSS(editLogOutTime.trim()) : '';
 
     const targetProj = projects.find((p) => p.id === editLogProjectId);
     const updatedPunch: PunchPair = {
@@ -445,6 +470,152 @@ export function ProjectsModal({
   };
 
   const activeStats = projectStats.find((ps) => ps.project.id === selectedProjectId) || projectStats[0];
+
+  const applyPreset = (preset: 'all' | 'this-month' | 'last-month' | 'this-quarter' | 'last-30' | 'custom') => {
+    setRangePreset(preset);
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth();
+
+    if (preset === 'all') {
+      setStartDate('');
+      setEndDate('');
+    } else if (preset === 'this-month') {
+      const start = new Date(y, m, 1);
+      const end = new Date(y, m + 1, 0);
+      setStartDate(formatDateToYYYYMMDD(start));
+      setEndDate(formatDateToYYYYMMDD(end));
+    } else if (preset === 'last-month') {
+      const start = new Date(y, m - 1, 1);
+      const end = new Date(y, m, 0);
+      setStartDate(formatDateToYYYYMMDD(start));
+      setEndDate(formatDateToYYYYMMDD(end));
+    } else if (preset === 'this-quarter') {
+      const q = Math.floor(m / 3);
+      const start = new Date(y, q * 3, 1);
+      const end = new Date(y, (q + 1) * 3, 0);
+      setStartDate(formatDateToYYYYMMDD(start));
+      setEndDate(formatDateToYYYYMMDD(end));
+    } else if (preset === 'last-30') {
+      const past = new Date(now);
+      past.setDate(past.getDate() - 30);
+      setStartDate(formatDateToYYYYMMDD(past));
+      setEndDate(formatDateToYYYYMMDD(now));
+    }
+  };
+
+  const handleClearRange = () => {
+    applyPreset('all');
+  };
+
+  const hasBillableRate = Boolean(activeStats?.project.billableRate && activeStats.project.billableRate > 0);
+  const isRangeActive = Boolean(hasBillableRate && (startDate || endDate));
+  const isInvalidRange = Boolean(startDate && endDate && startDate > endDate);
+
+  // Active project logs filtered by date range
+  const activeLogs = activeStats?.logs || [];
+  const filteredRangeLogs = activeLogs.filter((log) => {
+    if (startDate && log.date < startDate) return false;
+    if (endDate && log.date > endDate) return false;
+    return true;
+  });
+
+  const rangeTotalSeconds = isRangeActive
+    ? filteredRangeLogs.reduce((sum, log) => sum + log.durationSec, 0)
+    : activeStats?.totalSeconds || 0;
+
+  const rangeTotalHours = rangeTotalSeconds / 3600;
+  const rangeSessionCount = isRangeActive ? filteredRangeLogs.length : activeStats?.sessionCount || 0;
+  const activeRate = activeStats?.project.billableRate || 0;
+  const rangeBillableTotal = activeRate > 0 ? (rangeTotalHours * activeRate) : 0;
+  const rangeDistinctDaysCount = new Set(filteredRangeLogs.map((l) => l.date)).size;
+
+  const handleCopyInvoiceSummary = () => {
+    if (!activeStats) return;
+    const proj = activeStats.project;
+    const rangeLabel = startDate && endDate
+      ? `${formatDateMMDDYYYY(startDate)} – ${formatDateMMDDYYYY(endDate)}`
+      : startDate
+      ? `From ${formatDateMMDDYYYY(startDate)}`
+      : endDate
+      ? `Through ${formatDateMMDDYYYY(endDate)}`
+      : 'All Time';
+
+    const lines = [
+      `INVOICE & BILLING SUMMARY`,
+      `----------------------------------------`,
+      `Project: ${proj.name}${proj.client ? ` (Client: ${proj.client})` : ''}`,
+      `Billing Period: ${rangeLabel}`,
+      `Total Hours: ${rangeTotalHours.toFixed(2)} hrs (${formatSecondsToHuman(rangeTotalSeconds)})`,
+      `Billable Rate: ${activeRate > 0 ? `$${activeRate.toFixed(2)}/hr` : 'Not set ($0.00/hr)'}`,
+      activeRate > 0 ? `Total Amount Due: $${rangeBillableTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : null,
+      `Punches Logged: ${rangeSessionCount} sessions across ${rangeDistinctDaysCount} days`,
+      `----------------------------------------`,
+      ``,
+      `ITEMIZED SESSIONS:`,
+      ...filteredRangeLogs.map((l) => {
+        const timeSpan = l.inTime && l.outTime ? `${formatTime24to12(l.inTime)} – ${formatTime24to12(l.outTime)}` : 'Recorded';
+        const dur = formatSecondsToHuman(l.durationSec);
+        const hours = (l.durationSec / 3600).toFixed(2);
+        const subtotal = activeRate > 0 ? ` ($${((l.durationSec / 3600) * activeRate).toFixed(2)})` : '';
+        const note = l.note ? ` | Note: ${l.note}` : '';
+        return `• ${formatDateMMDDYYYY(l.date)} | ${timeSpan} | ${dur} (${hours}h)${subtotal}${note}`;
+      }),
+    ].filter((line) => line !== null);
+
+    navigator.clipboard.writeText(lines.join('\n'));
+    setCopiedInvoice(true);
+    setTimeout(() => setCopiedInvoice(false), 2200);
+  };
+
+  const handleExportRangeCSV = () => {
+    if (!activeStats) return;
+    const proj = activeStats.project;
+    const rangeLabel = startDate && endDate
+      ? `${startDate}_to_${endDate}`
+      : startDate
+      ? `from_${startDate}`
+      : endDate
+      ? `to_${endDate}`
+      : 'all_time';
+
+    const rows = [
+      `# INVOICE & BILLING SUMMARY`,
+      `# Project: "${(proj.name || '').replace(/"/g, '""')}"`,
+      proj.client ? `# Client: "${proj.client.replace(/"/g, '""')}"` : null,
+      `# Date Range: "${startDate || 'Beginning'} to ${endDate || 'Present'}"`,
+      `# Total Hours: ${rangeTotalHours.toFixed(2)}`,
+      `# Total Seconds: ${rangeTotalSeconds}`,
+      activeRate > 0 ? `# Billable Rate: $${activeRate.toFixed(2)}/hr` : null,
+      activeRate > 0 ? `# Total Amount Due: $${rangeBillableTotal.toFixed(2)}` : null,
+      `# Sessions Count: ${rangeSessionCount}`,
+      `# Exported: ${new Date().toISOString()}`,
+      ``,
+      `Date,Time In,Time Out,Duration (Seconds),Duration (Formatted),Duration (Hours),Billable Rate ($/hr),Subtotal ($),Notes & Objectives`,
+      ...filteredRangeLogs.map((l) => {
+        const dateFormatted = formatDateMMDDYYYY(l.date);
+        const inT = l.inTime ? formatTime24to12(l.inTime) : '';
+        const outT = l.outTime ? formatTime24to12(l.outTime) : '';
+        const durSec = l.durationSec;
+        const durFormatted = formatSecondsToHuman(durSec);
+        const durH = (durSec / 3600).toFixed(2);
+        const rateStr = activeRate > 0 ? activeRate.toFixed(2) : '0.00';
+        const subtotal = activeRate > 0 ? ((durSec / 3600) * activeRate).toFixed(2) : '0.00';
+        const noteClean = (l.note || '').replace(/"/g, '""');
+        return `"${dateFormatted}","${inT}","${outT}",${durSec},"${durFormatted}",${durH},"${rateStr}","${subtotal}","${noteClean}"`;
+      }),
+    ].filter((r) => r !== null);
+
+    const csvContent = rows.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${proj.name.replace(/[^a-zA-Z0-9_-]/g, '_')}_Billing_${rangeLabel}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-2 sm:p-4 md:p-6 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
@@ -1036,19 +1207,286 @@ export function ProjectsModal({
                   </p>
                 )}
 
+                {/* Billing Calculator by Date (Collapsible Dropdown - Only shown if billableRate > 0) */}
+                {hasBillableRate && (
+                  <div className="rounded-xl bg-slate-50/90 border border-slate-200/90 shadow-2xs overflow-hidden transition-all">
+                    {/* Collapsible Header Trigger */}
+                    <div
+                      onClick={() => setIsAggregatorExpanded(!isAggregatorExpanded)}
+                      className="p-3 sm:p-3.5 flex items-center justify-between gap-2.5 cursor-pointer hover:bg-slate-100/70 transition-colors select-none"
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={isAggregatorExpanded}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setIsAggregatorExpanded(!isAggregatorExpanded);
+                        }
+                      }}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Calculator className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span className="text-xs font-bold text-slate-900 tracking-tight truncate">
+                          Billing Calculator by Date
+                        </span>
+                        {isRangeActive && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 shrink-0 truncate max-w-[200px] sm:max-w-none">
+                            {formatDateMMDDYYYY(startDate) || 'Start'} – {formatDateMMDDYYYY(endDate) || 'Present'} • {rangeTotalHours.toFixed(1)}h
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {isRangeActive && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleClearRange();
+                            }}
+                            className="px-2 py-0.5 rounded-md text-[10px] font-bold text-rose-600 hover:text-rose-700 hover:bg-rose-50 border border-rose-200/60 cursor-pointer transition-colors"
+                            title="Clear date filter"
+                          >
+                            Clear
+                          </button>
+                        )}
+                        <div className="text-slate-400 hover:text-slate-600 transition-colors">
+                          {isAggregatorExpanded ? (
+                            <ChevronUp className="w-4 h-4" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4" />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Expanded Content Body */}
+                    {isAggregatorExpanded && (
+                      <div className="px-3.5 pb-3.5 sm:px-4 sm:pb-4 pt-1 space-y-3 border-t border-slate-200/70 animate-fadeIn">
+                        {/* Action Header: Expandable Filters, Copy, and Export side by side on the same line */}
+                        <div className="flex items-center justify-between gap-1.5 sm:gap-2 pt-1">
+                          {/* Expandable "Filters" Toggle */}
+                          <div className="relative shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setIsFiltersExpanded(!isFiltersExpanded)}
+                              className={`px-2 sm:px-2.5 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1 sm:gap-1.5 transition-all cursor-pointer shadow-2xs ${
+                                isFiltersExpanded || (rangePreset !== 'all' && rangePreset !== 'custom')
+                                  ? 'bg-slate-900 text-white border-slate-900'
+                                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                              }`}
+                              aria-expanded={isFiltersExpanded}
+                            >
+                              <Filter className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                              <span>Filters</span>
+                              {rangePreset !== 'all' && rangePreset !== 'custom' && (
+                                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-extrabold bg-emerald-500 text-white hidden sm:inline-block">
+                                  {rangePreset === 'this-month' ? 'This Month' : rangePreset === 'last-month' ? 'Last Month' : rangePreset === 'this-quarter' ? 'This Qtr' : 'Last 30d'}
+                                </span>
+                              )}
+                              {isFiltersExpanded ? (
+                                <ChevronUp className="w-3.5 h-3.5 opacity-70 shrink-0" />
+                              ) : (
+                                <ChevronDown className="w-3.5 h-3.5 opacity-70 shrink-0" />
+                              )}
+                            </button>
+                          </div>
+
+                          {/* Export & Copy Actions */}
+                          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                            <button
+                              type="button"
+                              onClick={handleCopyInvoiceSummary}
+                              className="px-2 sm:px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 active:scale-95 text-slate-700 font-bold text-xs flex items-center gap-1 sm:gap-1.5 shadow-2xs transition-all cursor-pointer whitespace-nowrap"
+                              title="Copy formatted invoice & session breakdown to clipboard"
+                            >
+                              {copiedInvoice ? (
+                                <>
+                                  <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                  <span className="text-emerald-700 text-[11px] sm:text-xs">Copied!</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                  <span className="text-[11px] sm:text-xs">
+                                    <span className="sm:hidden">Copy</span>
+                                    <span className="hidden sm:inline">Copy Summary</span>
+                                  </span>
+                                </>
+                              )}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={handleExportRangeCSV}
+                              className="px-2 sm:px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 active:scale-95 text-slate-700 font-bold text-xs flex items-center gap-1 sm:gap-1.5 shadow-2xs transition-all cursor-pointer whitespace-nowrap"
+                              title="Export itemized CSV for this billing range"
+                            >
+                              <FileSpreadsheet className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                              <span className="text-[11px] sm:text-xs">Export CSV</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Expandable "Filters" Preset Panel */}
+                        {isFiltersExpanded && (
+                          <div className="p-2.5 rounded-xl bg-white border border-slate-200 shadow-2xs flex flex-wrap items-center gap-1.5 animate-fadeIn">
+                            {[
+                              { key: 'all', label: 'All Time' },
+                              { key: 'this-month', label: 'This Month' },
+                              { key: 'last-month', label: 'Last Month' },
+                              { key: 'this-quarter', label: 'This Quarter' },
+                              { key: 'last-30', label: 'Last 30 Days' },
+                            ].map((preset) => {
+                              const isSelected = rangePreset === preset.key;
+                              return (
+                                <button
+                                  key={preset.key}
+                                  type="button"
+                                  onClick={() => {
+                                    applyPreset(preset.key as any);
+                                    if (preset.key === 'all') {
+                                      setIsFiltersExpanded(false);
+                                    }
+                                  }}
+                                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                                    isSelected
+                                      ? 'bg-slate-900 text-white shadow-2xs font-bold'
+                                      : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 hover:text-slate-900'
+                                  }`}
+                                >
+                                  {preset.label}
+                                </button>
+                              );
+                            })}
+
+                            {isRangeActive && (
+                              <button
+                                type="button"
+                                onClick={handleClearRange}
+                                className="px-2 py-1 rounded-lg text-[11px] font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 flex items-center gap-1 transition-colors cursor-pointer ml-auto"
+                                title="Reset to All Time"
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                                <span>Reset Filter</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Custom Date Pickers */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center gap-1">
+                              <Calendar className="w-3 h-3 text-slate-400" />
+                              Start Date (From)
+                            </label>
+                            <input
+                              type="date"
+                              value={startDate}
+                              onChange={(e) => {
+                                setStartDate(e.target.value);
+                                setRangePreset('custom');
+                              }}
+                              className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-400 shadow-2xs"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center gap-1">
+                              <Calendar className="w-3 h-3 text-slate-400" />
+                              End Date (To)
+                            </label>
+                            <input
+                              type="date"
+                              value={endDate}
+                              onChange={(e) => {
+                                setEndDate(e.target.value);
+                                setRangePreset('custom');
+                              }}
+                              className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-400 shadow-2xs"
+                            />
+                          </div>
+                        </div>
+
+                        {isInvalidRange && (
+                          <div className="text-[11px] text-rose-600 font-bold bg-rose-50 p-2 rounded-lg border border-rose-200">
+                            Warning: Start date ({formatDateMMDDYYYY(startDate)}) is after End date ({formatDateMMDDYYYY(endDate)}). Please check the date range.
+                          </div>
+                        )}
+
+                        {/* Range Calculation Breakdown Bar */}
+                        <div className="p-3 rounded-lg bg-white border border-slate-200/90 grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
+                          <div>
+                            <div className="text-[10px] font-bold uppercase text-slate-400">Hours in Range</div>
+                            <div className="text-base font-extrabold font-mono text-slate-900 mt-0.5">
+                              {rangeTotalHours.toFixed(2)}h
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-mono">
+                              {formatSecondsToHHMMSS(rangeTotalSeconds)}
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="text-[10px] font-bold uppercase text-slate-400">Billable Amount</div>
+                            <div className="text-base font-extrabold font-mono text-emerald-700 mt-0.5">
+                              ${rangeBillableTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-medium">
+                              {activeRate > 0 ? `@ $${activeRate.toFixed(2)}/hr` : 'No rate set'}
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="text-[10px] font-bold uppercase text-slate-400">Punches in Range</div>
+                            <div className="text-base font-extrabold font-mono text-slate-900 mt-0.5">
+                              {rangeSessionCount}
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-medium">
+                              across {rangeDistinctDaysCount} days
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="text-[10px] font-bold uppercase text-slate-400">Avg / Session</div>
+                            <div className="text-base font-extrabold font-mono text-slate-900 mt-0.5">
+                              {rangeSessionCount > 0 ? (rangeTotalHours / rangeSessionCount).toFixed(1) : 0}h
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-medium">
+                              per punch
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Metrics Highlights */}
                 <div className="grid grid-cols-2 gap-3">
                   <div className="p-3 rounded-xl bg-white border border-slate-200 flex flex-col justify-between">
                     <div>
-                      <div className="text-[10px] font-bold uppercase text-slate-400">Total Project Time</div>
-                      <div className="text-lg font-extrabold font-mono text-indigo-950">
-                        {formatSecondsToHHMMSS(activeStats.totalSeconds)}
+                      <div className="text-[10px] font-bold uppercase text-slate-400 flex items-center justify-between">
+                        <span>{isRangeActive ? 'Period Project Time' : 'Total Project Time'}</span>
+                        {isRangeActive && (
+                          <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded-xs">
+                            Range
+                          </span>
+                        )}
                       </div>
+                      <div className="text-lg font-extrabold font-mono text-indigo-950">
+                        {formatSecondsToHHMMSS(rangeTotalSeconds)}
+                      </div>
+                      {isRangeActive && (
+                        <div className="text-[10px] text-slate-400 font-medium">
+                          All-time: {activeStats.totalHours}h
+                        </div>
+                      )}
                     </div>
                     {activeStats.project.billableRate && activeStats.project.billableRate > 0 ? (
                       <div className="text-[12px] font-bold font-mono text-emerald-700 mt-1 flex items-center gap-1.5">
                         <span>
-                          ${((activeStats.totalSeconds / 3600) * activeStats.project.billableRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          ${rangeBillableTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                         <span className="text-[10px] text-slate-400 font-normal">
                           (${activeStats.project.billableRate.toFixed(2)}/hr)
@@ -1060,38 +1498,74 @@ export function ProjectsModal({
                   </div>
 
                   <div className="p-3 rounded-xl bg-white border border-slate-200">
-                    <div className="text-[10px] font-bold uppercase text-slate-400">Punches Logged</div>
+                    <div className="text-[10px] font-bold uppercase text-slate-400 flex items-center justify-between">
+                      <span>{isRangeActive ? 'Period Punches' : 'Punches Logged'}</span>
+                      {isRangeActive && (
+                        <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded-xs">
+                          Range
+                        </span>
+                      )}
+                    </div>
                     <div className="text-lg font-extrabold font-mono text-slate-900">
-                      {activeStats.sessionCount}
+                      {rangeSessionCount}
                     </div>
                     <div className="text-[11px] text-slate-500 font-medium mt-0.5">
-                      Average ~{activeStats.sessionCount > 0 ? (activeStats.totalSeconds / activeStats.sessionCount / 3600).toFixed(1) : 0}h / punch
+                      Average ~{rangeSessionCount > 0 ? (rangeTotalSeconds / rangeSessionCount / 3600).toFixed(1) : 0}h / punch
+                      {isRangeActive && (
+                        <span className="block text-[10px] text-slate-400">
+                          All-time: {activeStats.sessionCount} punches
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
 
                 {/* Session Notes & Accomplished Objectives Log */}
                 <div className="space-y-2 pt-2">
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs font-bold text-slate-700">
                     <span className="flex items-center gap-1.5">
                       <FileText className="w-3.5 h-3.5" style={{ color: secondaryColor }} />
                       Session Notes & Accomplished Objectives
                     </span>
                     <span className="text-[11px] text-slate-400 font-normal">
-                      {activeStats.logs.length} entries
+                      {isRangeActive ? (
+                        <span>Showing {filteredRangeLogs.length} of {activeStats.logs.length} entries</span>
+                      ) : (
+                        <span>{activeStats.logs.length} entries</span>
+                      )}
                     </span>
                   </div>
 
+                  {isRangeActive && (
+                    <div className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-emerald-50/80 border border-emerald-200/80 text-[11px] text-emerald-900 font-medium">
+                      <span>
+                        Showing sessions from <strong>{formatDateMMDDYYYY(startDate) || 'Start'}</strong> to <strong>{formatDateMMDDYYYY(endDate) || 'Present'}</strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleClearRange}
+                        className="text-emerald-700 hover:text-emerald-900 font-bold underline cursor-pointer text-[10px]"
+                      >
+                        Clear Range
+                      </button>
+                    </div>
+                  )}
+
                   <div className="space-y-2.5">
-                    {activeStats.logs.length === 0 ? (
+                    {filteredRangeLogs.length === 0 ? (
                       <EmptyState
                         icon={FileText}
-                        title="No Sessions Logged Yet"
-                        description="No punches or notes have been logged for this project yet. Assign this project when clocking in."
+                        title={isRangeActive ? "No Sessions in Date Range" : "No Sessions Logged Yet"}
+                        description={
+                          isRangeActive
+                            ? `No punches were recorded for this project between ${formatDateMMDDYYYY(startDate) || 'Start'} and ${formatDateMMDDYYYY(endDate) || 'End'}. Try expanding the date range.`
+                            : "No punches or notes have been logged for this project yet. Assign this project when clocking in."
+                        }
                         compact
+                        action={isRangeActive ? { label: 'Reset to All Time', onClick: handleClearRange } : undefined}
                       />
                     ) : (
-                      activeStats.logs.map((log) => {
+                      filteredRangeLogs.map((log) => {
                         const isEditingThisPunch = editingLogId === log.id;
 
                         if (isEditingThisPunch) {

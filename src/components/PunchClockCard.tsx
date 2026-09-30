@@ -26,7 +26,8 @@ import {
   formatTime24to12, 
   formatSecondsToHHMMSS, 
   getDurationInSeconds,
-  getActiveElapsedSeconds
+  getActiveElapsedSeconds,
+  normalizeTimeToHHMMSS
 } from '../utils/timeCalculations';
 import { DayRecord, PunchPair, Project } from '../types';
 import { recordDeletedSession } from '../utils/storage';
@@ -54,6 +55,7 @@ interface PunchClockCardProps {
   onOpenPastDateModal: () => void;
   themeColor?: string;
   secondaryColor?: string;
+  liveElapsedSeconds?: number;
 }
 
 export function PunchClockCard({
@@ -76,6 +78,7 @@ export function PunchClockCard({
   onOpenPastDateModal,
   themeColor = '#0284C7',
   secondaryColor = '#0F172A',
+  liveElapsedSeconds,
 }: PunchClockCardProps) {
   const [sessionSeconds, setSessionSeconds] = useState<number>(0);
   const [activeNote, setActiveNote] = useState<string>('');
@@ -156,6 +159,9 @@ export function PunchClockCard({
 
   const currentActiveProj = projects.find((p) => p.id === localSelectedProj);
 
+  // Effective live elapsed seconds (synced with App level timer or local active calculation)
+  const currentElapsed = liveElapsedSeconds !== undefined ? liveElapsedSeconds : sessionSeconds;
+
   // Retroactive project assignment for an existing session
   const handleRetroactiveProjectChange = (sessionIdx: number, newProjectId: string) => {
     const rawPunches = todayRecord?.punches ? [...todayRecord.punches] : [];
@@ -179,8 +185,8 @@ export function PunchClockCard({
     const pair = punches[sessionIdx];
     if (!pair) return;
     setEditingSessionIdx(sessionIdx);
-    setEditInTime(pair.inTime ? pair.inTime.substring(0, 5) : '');
-    setEditOutTime(pair.outTime ? pair.outTime.substring(0, 5) : '');
+    setEditInTime(pair.inTime ? normalizeTimeToHHMMSS(pair.inTime) : '');
+    setEditOutTime(pair.outTime ? normalizeTimeToHHMMSS(pair.outTime) : '');
     setEditProjectId(pair.projectId || '');
     setEditNote(pair.note || '');
   };
@@ -192,12 +198,13 @@ export function PunchClockCard({
     if (!rawPunches[editingSessionIdx]) return;
     const targetProj = projects.find((p) => p.id === editProjectId);
     
-    const formattedIn = editInTime ? (editInTime.length === 5 ? `${editInTime}:00` : editInTime) : '';
-    const formattedOut = editOutTime ? (editOutTime.length === 5 ? `${editOutTime}:00` : editOutTime) : '';
+    const formattedIn = editInTime.trim() ? normalizeTimeToHHMMSS(editInTime) : '';
+    const formattedOut = editOutTime.trim() ? normalizeTimeToHHMMSS(editOutTime) : '';
 
     const updated = rawPunches.map((p, idx) => {
       if (idx === editingSessionIdx) {
         return {
+          ...p,
           inTime: formattedIn,
           outTime: formattedOut,
           projectId: targetProj ? targetProj.id : undefined,
@@ -209,6 +216,14 @@ export function PunchClockCard({
     });
 
     onUpdateTodaySessions?.(updated);
+
+    // If this was the active session (open with no outTime), immediately recalculate elapsed time
+    if (!formattedOut && formattedIn) {
+      const targetDate = rawPunches[editingSessionIdx]?.inDate || activeInDate || todayRecord?.date;
+      const immediateElapsed = getActiveElapsedSeconds(targetDate, formattedIn, new Date());
+      setSessionSeconds(immediateElapsed);
+    }
+
     setEditingSessionIdx(null);
   };
 
@@ -320,17 +335,17 @@ export function PunchClockCard({
             <div>
               <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
                 <span>Current Session</span>
-                {sessionSeconds >= 86400 && (
+                {currentElapsed >= 86400 && (
                   <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-1 rounded">
-                    Day {Math.floor(sessionSeconds / 86400) + 1}
+                    Day {Math.floor(currentElapsed / 86400) + 1}
                   </span>
                 )}
               </div>
               <div className="text-base font-black font-mono text-emerald-700 tracking-tight leading-none flex items-baseline gap-1">
-                <span>{formatSecondsToHHMMSS(sessionSeconds)}</span>
-                {sessionSeconds >= 86400 && (
+                <span>{formatSecondsToHHMMSS(currentElapsed)}</span>
+                {currentElapsed >= 86400 && (
                   <span className="text-[10px] font-bold text-indigo-600">
-                    (+{Math.floor(sessionSeconds / 86400)}d)
+                    (+{Math.floor(currentElapsed / 86400)}d)
                   </span>
                 )}
               </div>

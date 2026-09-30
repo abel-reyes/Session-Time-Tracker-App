@@ -22,7 +22,8 @@ import {
   calculateDayTotalSeconds,
   splitMultiDaySession,
   deleteSessionFromRecords,
-  generateSessionId
+  generateSessionId,
+  normalizeTimeToHHMMSS
 } from '../utils/timeCalculations';
 import { recordDeletedSession } from '../utils/storage';
 import { ProjectBadge } from './ProjectBadge';
@@ -115,11 +116,8 @@ export function PastDateEntryModal({
       return;
     }
 
-    let formattedIn = newInTime.trim();
-    if (formattedIn.length === 5) formattedIn += ':00';
-
-    let formattedOut = newOutTime.trim();
-    if (formattedOut.length === 5) formattedOut += ':00';
+    const formattedIn = normalizeTimeToHHMMSS(newInTime.trim());
+    const formattedOut = newOutTime.trim() ? normalizeTimeToHHMMSS(newOutTime.trim()) : '';
 
     const matchProj = projects.find((p) => p.id === newProjectId);
 
