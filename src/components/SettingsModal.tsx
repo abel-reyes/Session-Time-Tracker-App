@@ -60,7 +60,9 @@ import {
   updateCreatorSuggestionStatus,
   deleteCreatorSuggestion,
   exportSuggestionsToMarkdownFile,
-  CREATOR_EMAIL
+  CREATOR_EMAIL,
+  findPreviousConfiguredGoal,
+  getQuarterGoal,
 } from '../utils/storage';
 import { ConfirmModal, ConfirmDialogOptions } from './ConfirmModal';
 import { EmptyState } from './EmptyState';
@@ -115,6 +117,7 @@ interface SettingsModalProps {
   onOpenAuthModal?: () => void;
   onSyncRefresh?: () => void;
   initialTab?: SettingsTab;
+  activeQuarter?: string;
 }
 
 export function SettingsModal({
@@ -128,6 +131,7 @@ export function SettingsModal({
   onOpenAuthModal,
   onSyncRefresh,
   initialTab = 'theme',
+  activeQuarter = getQuarterName(),
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab || 'theme');
   const [isCustomColorsOpen, setIsCustomColorsOpen] = useState<boolean>(false);
@@ -251,22 +255,25 @@ export function SettingsModal({
 
   useEffect(() => {
     if (isOpen) {
+      const quarterGoal = getQuarterGoal(activeQuarter, settings);
+      const effectiveWeekly = quarterGoal.weeklyGoalHours || settings.weeklyGoalHours || 0;
+      const effectiveDaily = quarterGoal.dailyGoalHours || settings.dailyGoalHours || 0;
+      const effectiveEnabled = quarterGoal.enableGoals !== undefined ? quarterGoal.enableGoals : (settings.enableGoals !== false);
+
       setForm({
         ...settings,
         themeColor: settings.themeColor || '#0284C7',
         chartColor: settings.chartColor || '#0F172A',
         textSize: settings.textSize || 'default',
-        enableGoals: settings.enableGoals !== false,
+        enableGoals: effectiveEnabled,
+        weeklyGoalHours: effectiveWeekly,
+        dailyGoalHours: effectiveDaily,
       });
       setWeeklyGoalInput(
-        settings.weeklyGoalHours !== undefined && settings.weeklyGoalHours !== null
-          ? String(settings.weeklyGoalHours)
-          : '40'
+        effectiveWeekly > 0 ? String(effectiveWeekly) : (settings.weeklyGoalHours ? String(settings.weeklyGoalHours) : '40')
       );
       setDailyGoalInput(
-        settings.dailyGoalHours !== undefined && settings.dailyGoalHours !== null
-          ? String(settings.dailyGoalHours)
-          : '8'
+        effectiveDaily > 0 ? String(effectiveDaily) : (settings.dailyGoalHours ? String(settings.dailyGoalHours) : '8')
       );
       setSyncChartWithTheme(
         (settings.chartColor || '#0F172A') === (settings.themeColor || '#0284C7')

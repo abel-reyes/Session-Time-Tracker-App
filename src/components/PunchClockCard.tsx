@@ -17,7 +17,8 @@ import {
   Edit2,
   Trash2,
   Check,
-  X
+  X,
+  Lock
 } from 'lucide-react';
 import { 
   formatDateToYYYYMMDD, 
@@ -56,6 +57,9 @@ interface PunchClockCardProps {
   themeColor?: string;
   secondaryColor?: string;
   liveElapsedSeconds?: number;
+  activeQuarter?: string;
+  currentQuarter?: string;
+  onReturnToCurrentQuarter?: () => void;
 }
 
 export function PunchClockCard({
@@ -79,6 +83,9 @@ export function PunchClockCard({
   themeColor = '#0284C7',
   secondaryColor = '#0F172A',
   liveElapsedSeconds,
+  activeQuarter,
+  currentQuarter,
+  onReturnToCurrentQuarter,
 }: PunchClockCardProps) {
   const [sessionSeconds, setSessionSeconds] = useState<number>(0);
   const [activeNote, setActiveNote] = useState<string>('');
@@ -88,18 +95,27 @@ export function PunchClockCard({
 
   // Editing session modal state
   const [editingSessionIdx, setEditingSessionIdx] = useState<number | null>(null);
+  const [focusField, setFocusField] = useState<'IN' | 'OUT' | null>(null);
   const [editInTime, setEditInTime] = useState<string>('');
   const [editOutTime, setEditOutTime] = useState<string>('');
   const [editProjectId, setEditProjectId] = useState<string>('');
   const [editNote, setEditNote] = useState<string>('');
+
+  const inTimeInputRef = useRef<HTMLInputElement>(null);
+  const outTimeInputRef = useRef<HTMLInputElement>(null);
 
   // Long press timer reference
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Keep local project in sync if external selection changes
   useEffect(() => {
-    if (selectedProjectId) {
-      setLocalSelectedProj(selectedProjectId);
+    if (selectedProjectId !== undefined) {
+      if (selectedProjectId === '' || projects.some((p) => p.id === selectedProjectId && !p.archived)) {
+        setLocalSelectedProj(selectedProjectId);
+      } else {
+        const fallback = projects.find((p) => !p.archived)?.id || '';
+        setLocalSelectedProj(fallback);
+      }
     } else if (!localSelectedProj && projects[0]?.id) {
       setLocalSelectedProj(projects[0].id);
     }
@@ -178,18 +194,48 @@ export function PunchClockCard({
       return p;
     });
     onUpdateTodaySessions?.(updated);
+    if (!rawPunches[sessionIdx]?.outTime) {
+      setLocalSelectedProj(newProjectId);
+      onSelectProject?.(newProjectId);
+    }
   };
 
   // Start editing a session
-  const handleStartEditSession = (sessionIdx: number) => {
+  const handleStartEditSession = (sessionIdx: number, targetField: 'IN' | 'OUT' = 'IN') => {
     const pair = punches[sessionIdx];
     if (!pair) return;
+    const inVal = pair.inTime ? normalizeTimeToHHMMSS(pair.inTime) : '';
+    const outVal = pair.outTime ? normalizeTimeToHHMMSS(pair.outTime) : '';
     setEditingSessionIdx(sessionIdx);
-    setEditInTime(pair.inTime ? normalizeTimeToHHMMSS(pair.inTime) : '');
-    setEditOutTime(pair.outTime ? normalizeTimeToHHMMSS(pair.outTime) : '');
+    setFocusField(targetField);
+    setEditInTime(inVal);
+    setEditOutTime(outVal);
     setEditProjectId(pair.projectId || '');
     setEditNote(pair.note || '');
+
+    // Synchronously focus and trigger the native scrolling wheel picker during this user gesture
+    const targetEl = targetField === 'OUT' ? outTimeInputRef.current : inTimeInputRef.current;
+    if (targetEl) {
+      targetEl.value = targetField === 'OUT' ? outVal : inVal;
+      targetEl.focus();
+      try {
+        targetEl.showPicker?.();
+      } catch {}
+    }
   };
+
+  // The moment user touches to edit, immediately bring up the native scrolling wheels picker
+  useEffect(() => {
+    if (editingSessionIdx !== null && focusField) {
+      const targetEl = focusField === 'OUT' ? outTimeInputRef.current : inTimeInputRef.current;
+      if (targetEl) {
+        targetEl.focus();
+        try {
+          targetEl.showPicker?.();
+        } catch {}
+      }
+    }
+  }, [editingSessionIdx, focusField]);
 
   // Save session edits
   const handleSaveSessionEdit = () => {
@@ -216,6 +262,12 @@ export function PunchClockCard({
     });
 
     onUpdateTodaySessions?.(updated);
+
+    // If editing the active session, also sync the selected project
+    if (editingSessionIdx !== null && !rawPunches[editingSessionIdx]?.outTime) {
+      setLocalSelectedProj(editProjectId);
+      onSelectProject?.(editProjectId);
+    }
 
     // If this was the active session (open with no outTime), immediately recalculate elapsed time
     if (!formattedOut && formattedIn) {
@@ -308,7 +360,7 @@ export function PunchClockCard({
                   </span>
                   {isMultiDay && (
                     <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs">
-                      🌙 Multi-Day Active
+                      Multi-Day Active
                     </span>
                   )}
                 </div>
@@ -382,8 +434,29 @@ export function PunchClockCard({
               <select
                 value={localSelectedProj}
                 onChange={(e) => {
-                  setLocalSelectedProj(e.target.value);
-                  onSelectProject?.(e.target.value);
+                  const newProjId = e.target.value;
+                  setLocalSelectedProj(newProjId);
+                  onSelectProject?.(newProjId);
+
+                  // If user is actively clocked in, retroactively reassign active open session's project immediately
+                  if (isPunchedIn) {
+                    const rawPunches = todayRecord?.punches ? [...todayRecord.punches] : [];
+                    const activeIdx = rawPunches.findIndex((p) => p.inTime && !p.outTime);
+                    if (activeIdx >= 0) {
+                      const targetProj = projects.find((p) => p.id === newProjId);
+                      const updated = rawPunches.map((p, idx) => {
+                        if (idx === activeIdx) {
+                          return {
+                            ...p,
+                            projectId: targetProj ? targetProj.id : undefined,
+                            projectName: targetProj ? targetProj.name : undefined,
+                          };
+                        }
+                        return p;
+                      });
+                      onUpdateTodaySessions?.(updated);
+                    }
+                  }
                 }}
                 className="w-full pl-7 pr-3 py-1.5 text-xs font-semibold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-indigo-600 shadow-2xs"
               >
@@ -411,6 +484,27 @@ export function PunchClockCard({
               className="w-full px-3 py-1.5 text-xs text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-emerald-600 shadow-2xs"
             />
           </div>
+        </div>
+      )}
+
+      {/* Closed Quarter Review Notification */}
+      {activeQuarter && currentQuarter && activeQuarter !== currentQuarter && (
+        <div className="my-3 p-3 bg-amber-50 border border-amber-200/90 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-amber-950 shadow-2xs">
+          <div className="flex items-start sm:items-center gap-2">
+            <Lock className="w-4 h-4 text-amber-700 shrink-0" />
+            <div>
+              <span className="font-bold">Reviewing Closed Quarter ({activeQuarter})</span>
+            </div>
+          </div>
+          {onReturnToCurrentQuarter && (
+            <button
+              type="button"
+              onClick={onReturnToCurrentQuarter}
+              className="px-3 py-1.5 text-xs font-bold text-amber-900 bg-amber-200/80 hover:bg-amber-200 rounded-lg cursor-pointer shrink-0 transition-colors self-start sm:self-center"
+            >
+              Switch to {currentQuarter}
+            </button>
+          )}
         </div>
       )}
 
@@ -576,14 +670,26 @@ export function PunchClockCard({
 
                       {/* In/Out Times */}
                       <div className="space-y-0.5 font-mono text-xs">
-                        <div className="text-emerald-700 font-semibold truncate flex items-center justify-between">
+                        <div 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleStartEditSession(slotIdx, 'IN');
+                          }}
+                          className="text-emerald-700 font-semibold truncate flex items-center justify-between cursor-pointer hover:bg-emerald-100/70 rounded px-1 -mx-1 py-0.5 transition-colors"
+                          title="Touch to edit Clock In time"
+                        >
                           <span>▶ {formatTime24to12(pair.inTime)}</span>
                           <span className="text-[10px] text-slate-400 font-normal">IN</span>
                         </div>
                         <div
-                          className={`truncate flex items-center justify-between ${
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleStartEditSession(slotIdx, 'OUT');
+                          }}
+                          className={`truncate flex items-center justify-between cursor-pointer hover:bg-rose-100/70 rounded px-1 -mx-1 py-0.5 transition-colors ${
                             hasOut ? 'text-rose-700 font-semibold' : 'text-emerald-600 font-bold animate-pulse'
                           }`}
+                          title="Touch to edit Clock Out time"
                         >
                           <span>{hasOut ? `■ ${formatTime24to12(pair.outTime)}` : 'ACTIVE NOW'}</span>
                           <span className="text-[10px] text-slate-400 font-normal">OUT</span>
@@ -649,17 +755,19 @@ export function PunchClockCard({
         )}
       </div>
 
-      {/* EDIT SESSION MODAL */}
-      {editingSessionIdx !== null && (
-        <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
-          <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl border border-slate-200 p-5 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <Edit2 className="w-4 h-4 text-emerald-600" />
-                Edit Session #{editingSessionIdx + 1}
-              </h3>
+      {/* EDIT SESSION MODAL - Kept in DOM so synchronous user tap immediately triggers native scrolling wheels */}
+      <div className={`fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn ${editingSessionIdx === null ? 'hidden' : ''}`}>
+        <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl border border-slate-200 p-5 space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <Edit2 className="w-4 h-4 text-emerald-600" />
+              Edit Session #{(editingSessionIdx ?? 0) + 1}
+            </h3>
               <button
-                onClick={() => setEditingSessionIdx(null)}
+                onClick={() => {
+                  setEditingSessionIdx(null);
+                  setFocusField(null);
+                }}
                 className="text-slate-400 hover:text-slate-700 p-1 rounded-lg cursor-pointer"
               >
                 <X className="w-4 h-4" />
@@ -674,11 +782,22 @@ export function PunchClockCard({
                     Clock In Time
                   </label>
                   <input
+                    ref={inTimeInputRef}
                     type="time"
                     step="1"
                     value={editInTime}
                     onChange={(e) => setEditInTime(e.target.value)}
-                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-slate-800 font-mono text-xs"
+                    onClick={(e) => {
+                      try {
+                        e.currentTarget.showPicker();
+                      } catch {}
+                    }}
+                    onPointerDown={(e) => {
+                      try {
+                        (e.currentTarget as any).showPicker?.();
+                      } catch {}
+                    }}
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-slate-800 font-mono text-xs cursor-pointer focus:outline-emerald-600"
                   />
                 </div>
                 <div>
@@ -686,11 +805,22 @@ export function PunchClockCard({
                     Clock Out Time
                   </label>
                   <input
+                    ref={outTimeInputRef}
                     type="time"
                     step="1"
                     value={editOutTime}
                     onChange={(e) => setEditOutTime(e.target.value)}
-                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-slate-800 font-mono text-xs"
+                    onClick={(e) => {
+                      try {
+                        e.currentTarget.showPicker();
+                      } catch {}
+                    }}
+                    onPointerDown={(e) => {
+                      try {
+                        (e.currentTarget as any).showPicker?.();
+                      } catch {}
+                    }}
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-slate-800 font-mono text-xs cursor-pointer focus:outline-emerald-600"
                   />
                 </div>
               </div>
@@ -762,7 +892,6 @@ export function PunchClockCard({
             </div>
           </div>
         </div>
-      )}
 
       {/* Status Feedback Toast */}
       {statusMessage && (

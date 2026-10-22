@@ -34,7 +34,8 @@ import {
   getDurationInSeconds,
   parseCSVToRecordsAndProjects,
   deleteSessionFromRecords,
-  normalizeTimeToHHMMSS
+  normalizeTimeToHHMMSS,
+  getQuarterNameFromDateStr
 } from '../utils/timeCalculations';
 import { recordDeletedSession } from '../utils/storage';
 import { ConfirmModal, ConfirmDialogOptions } from './ConfirmModal';
@@ -47,9 +48,17 @@ interface ProjectsModalProps {
   records: DayRecord[];
   onSaveProjects: (projects: Project[]) => void;
   onSaveRecords?: (records: DayRecord[]) => void;
+  onSavePunchEdit?: (params: {
+    oldDate: string;
+    newDate: string;
+    punchIndex: number;
+    updatedPunch: PunchPair;
+  }) => void;
+  onDeletePunch?: (date: string, punch: PunchPair, punchIndex?: number) => void;
   onSelectProjectForSession?: (projectId: string) => void;
   themeColor?: string;
   secondaryColor?: string;
+  availableQuarters?: string[];
 }
 
 const PRESET_COLORS = [
@@ -74,9 +83,12 @@ export function ProjectsModal({
   records,
   onSaveProjects,
   onSaveRecords,
+  onSavePunchEdit,
+  onDeletePunch,
   onSelectProjectForSession,
   themeColor = '#059669',
   secondaryColor = '#0F172A',
+  availableQuarters = [],
 }: ProjectsModalProps) {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(projects[0]?.id || null);
   const [isCreating, setIsCreating] = useState<boolean>(false);
@@ -103,6 +115,7 @@ export function ProjectsModal({
   const [isAggregatorExpanded, setIsAggregatorExpanded] = useState<boolean>(false);
   const [isFiltersExpanded, setIsFiltersExpanded] = useState<boolean>(false);
   const [rangePreset, setRangePreset] = useState<'all' | 'this-month' | 'last-month' | 'this-quarter' | 'last-30' | 'custom'>('all');
+  const [selectedQuarterFilter, setSelectedQuarterFilter] = useState<string>('all');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [copiedInvoice, setCopiedInvoice] = useState<boolean>(false);
@@ -122,7 +135,7 @@ export function ProjectsModal({
 
   if (!isOpen) return null;
 
-  // Calculate project statistics from all records
+  // Calculate project statistics from all records across all quarters (full continuous scope)
   const projectStats = projects.map((p) => {
     let totalSec = 0;
     const sessionLogs: {
@@ -134,9 +147,13 @@ export function ProjectsModal({
       outTime?: string;
       durationSec: number;
       note?: string;
+      quarterName: string;
     }[] = [];
 
+    const quarterHoursMap = new Map<string, number>();
+
     records.forEach((r) => {
+      const qName = getQuarterNameFromDateStr(r.date);
       (r.punches || []).forEach((punch, pIdx) => {
         if (punch.projectId === p.id || punch.projectName === p.name) {
           let dur = 0;
@@ -144,6 +161,7 @@ export function ProjectsModal({
             dur = getDurationInSeconds(punch.inTime, punch.outTime, punch.inDate, punch.outDate);
           }
           totalSec += dur;
+          quarterHoursMap.set(qName, (quarterHoursMap.get(qName) || 0) + dur);
           sessionLogs.push({
             id: `${r.date}-${pIdx}-${punch.inTime || 'open'}`,
             date: r.date,
@@ -153,21 +171,39 @@ export function ProjectsModal({
             outTime: punch.outTime,
             durationSec: dur,
             note: punch.note || r.notes,
+            quarterName: qName,
           });
         }
       });
     });
+
+    const sortedLogs = sessionLogs.sort((a, b) => {
+      const dateDiff = b.date.localeCompare(a.date);
+      if (dateDiff !== 0) return dateDiff;
+      return (b.inTime || '').localeCompare(a.inTime || '');
+    });
+
+    const activeQuartersBreakdown = Array.from(quarterHoursMap.entries())
+      .map(([qName, sec]) => ({
+        quarter: qName,
+        seconds: sec,
+        hours: (sec / 3600).toFixed(1),
+      }))
+      .sort((a, b) => b.quarter.localeCompare(a.quarter));
+
+    const earliestDate = sortedLogs.length > 0 ? sortedLogs[sortedLogs.length - 1].date : null;
+    const latestDate = sortedLogs.length > 0 ? sortedLogs[0].date : null;
 
     return {
       project: p,
       totalSeconds: totalSec,
       totalHours: (totalSec / 3600).toFixed(1),
       sessionCount: sessionLogs.length,
-      logs: sessionLogs.sort((a, b) => {
-        const dateDiff = b.date.localeCompare(a.date);
-        if (dateDiff !== 0) return dateDiff;
-        return (b.inTime || '').localeCompare(a.inTime || '');
-      }),
+      activeQuarters: Array.from(quarterHoursMap.keys()),
+      activeQuartersBreakdown,
+      earliestDate,
+      latestDate,
+      logs: sortedLogs,
     };
   });
 
@@ -266,11 +302,6 @@ export function ProjectsModal({
     punchIndex: number;
     punch: PunchPair;
   }) => {
-    if (!onSaveRecords) return;
-    const updated = [...records];
-    const oldRecIdx = updated.findIndex((r) => r.date === log.date);
-    if (oldRecIdx === -1) return;
-
     const formattedIn = editLogInTime.trim() ? normalizeTimeToHHMMSS(editLogInTime.trim()) : '';
     const formattedOut = editLogOutTime.trim() ? normalizeTimeToHHMMSS(editLogOutTime.trim()) : '';
 
@@ -285,6 +316,22 @@ export function ProjectsModal({
       projectName: targetProj ? targetProj.name : undefined,
       note: editLogNote.trim() || undefined,
     };
+
+    if (onSavePunchEdit) {
+      onSavePunchEdit({
+        oldDate: log.date,
+        newDate: editLogDate,
+        punchIndex: log.punchIndex,
+        updatedPunch,
+      });
+      setEditingLogId(null);
+      return;
+    }
+
+    if (!onSaveRecords) return;
+    const updated = [...records];
+    const oldRecIdx = updated.findIndex((r) => r.date === log.date);
+    if (oldRecIdx === -1) return;
 
     if (editLogDate === log.date) {
       // Same date: update in place
@@ -324,16 +371,19 @@ export function ProjectsModal({
     inTime?: string;
     outTime?: string;
   }) => {
-    if (!onSaveRecords) return;
     setConfirmDialog({
       title: 'Delete Recorded Punch?',
       message: `Are you sure you want to delete this punch session on ${formatDateMMDDYYYY(log.date)}${log.inTime ? ` (${formatTime24to12(log.inTime)} – ${log.outTime ? formatTime24to12(log.outTime) : 'Open'})` : ''}? This will remove the punch from timesheets and immediately update project statistics.`,
       confirmText: 'Delete Punch',
       variant: 'danger',
       onConfirm: () => {
-        recordDeletedSession(log.punch, log.date);
-        const updated = deleteSessionFromRecords(records, log.date, log.punch, log.punchIndex);
-        onSaveRecords(updated);
+        if (onDeletePunch) {
+          onDeletePunch(log.date, log.punch, log.punchIndex);
+        } else if (onSaveRecords) {
+          recordDeletedSession(log.punch, log.date);
+          const updated = deleteSessionFromRecords(records, log.date, log.punch, log.punchIndex);
+          onSaveRecords(updated);
+        }
         setEditingLogId(null);
       },
     });
@@ -384,17 +434,18 @@ export function ProjectsModal({
     }
     rows.push('# END_PROJECTS_SECTION');
     rows.push('');
-    rows.push('Project Name,Client,Billable Rate ($/hr),Color,Description,Total Hours,Total Sessions,Billable Total ($)');
+    rows.push('Project Name,Client,Billable Rate ($/hr),Color,Description,Total Hours,Total Sessions,Quarters Active,Billable Total ($)');
     for (const ps of projectStats) {
       if (ps.project.isDeleted) continue;
       const p = ps.project;
       const nameSafe = (p.name || '').replace(/"/g, '""');
       const clientSafe = (p.client || '').replace(/"/g, '""');
       const rateSafe = p.billableRate !== undefined && p.billableRate !== null ? String(p.billableRate) : '';
-      const colorSafe = (p.color || '').replace(/"/g, '""');
+      const colorSafe = (p.color || '#0284C7').replace(/"/g, '""');
       const descSafe = (p.description || '').replace(/"/g, '""');
+      const qStr = ps.activeQuarters.join('; ') || 'None';
       const billableTot = p.billableRate && p.billableRate > 0 ? ((ps.totalSeconds / 3600) * p.billableRate).toFixed(2) : '';
-      rows.push(`"${nameSafe}","${clientSafe}","${rateSafe}","${colorSafe}","${descSafe}",${ps.totalHours},${ps.sessionCount},"${billableTot}"`);
+      rows.push(`"${nameSafe}","${clientSafe}","${rateSafe}","${colorSafe}","${descSafe}",${ps.totalHours},${ps.sessionCount},"${qStr}","${billableTot}"`);
     }
 
     const csvContent = rows.join('\n');
@@ -478,6 +529,7 @@ export function ProjectsModal({
     const m = now.getMonth();
 
     if (preset === 'all') {
+      setSelectedQuarterFilter('all');
       setStartDate('');
       setEndDate('');
     } else if (preset === 'this-month') {
@@ -505,16 +557,20 @@ export function ProjectsModal({
   };
 
   const handleClearRange = () => {
+    setSelectedQuarterFilter('all');
     applyPreset('all');
   };
 
   const hasBillableRate = Boolean(activeStats?.project.billableRate && activeStats.project.billableRate > 0);
-  const isRangeActive = Boolean(hasBillableRate && (startDate || endDate));
+  const isRangeActive = Boolean((startDate || endDate) || selectedQuarterFilter !== 'all');
   const isInvalidRange = Boolean(startDate && endDate && startDate > endDate);
 
-  // Active project logs filtered by date range
+  // Active project logs filtered by date range and optional quarter filter
   const activeLogs = activeStats?.logs || [];
   const filteredRangeLogs = activeLogs.filter((log) => {
+    if (selectedQuarterFilter !== 'all' && log.quarterName !== selectedQuarterFilter) {
+      return false;
+    }
     if (startDate && log.date < startDate) return false;
     if (endDate && log.date > endDate) return false;
     return true;
@@ -539,6 +595,8 @@ export function ProjectsModal({
       ? `From ${formatDateMMDDYYYY(startDate)}`
       : endDate
       ? `Through ${formatDateMMDDYYYY(endDate)}`
+      : selectedQuarterFilter !== 'all'
+      ? `${selectedQuarterFilter}`
       : 'All Time';
 
     const lines = [
@@ -577,6 +635,8 @@ export function ProjectsModal({
       ? `from_${startDate}`
       : endDate
       ? `to_${endDate}`
+      : selectedQuarterFilter !== 'all'
+      ? `${selectedQuarterFilter.replace(/\s+/g, '_')}`
       : 'all_time';
 
     const rows = [
@@ -631,9 +691,11 @@ export function ProjectsModal({
               >
                 <FolderKanban className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
               </div>
-              <h3 className="text-sm sm:text-base font-bold text-slate-900 truncate">
-                Project & Objectives Tracker
-              </h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm sm:text-base font-bold text-slate-900 truncate">
+                  Project & Objectives Tracker
+                </h3>
+              </div>
             </div>
 
             <button
@@ -647,7 +709,7 @@ export function ProjectsModal({
 
           {/* Note across the screen under title */}
           <p className="text-[11px] sm:text-xs text-slate-500">
-            Track specific time per project, categorize sessions, and annotate session accomplishments
+            Track and manage work projects, billable rates, objectives, and logged punch sessions
           </p>
 
           {/* Action buttons: New Project and Unified CSV Caret Dropdown */}
@@ -725,7 +787,7 @@ export function ProjectsModal({
                       Create New Project
                     </h4>
                     <p className="text-xs text-slate-500">
-                      Configure your project name, client, color tag, and scope
+                      Configure your project name, client, color tag, and objectives
                     </p>
                   </div>
                 </div>
@@ -847,7 +909,7 @@ export function ProjectsModal({
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Description & Scope Objectives
+                    Description & Objectives
                   </label>
                   <textarea
                     rows={3}
@@ -1140,7 +1202,7 @@ export function ProjectsModal({
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Description & Objectives Scope
+                    Description & Objectives
                   </label>
                   <textarea
                     rows={3}
@@ -1173,13 +1235,36 @@ export function ProjectsModal({
                       style={{ backgroundColor: activeStats.project.color || '#059669' }}
                     />
                     <div>
-                      <h4 className="text-sm font-bold text-slate-900">
-                        {activeStats.project.name}
-                      </h4>
-                      <p className="text-xs text-slate-500">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="text-sm font-bold text-slate-900">
+                          {activeStats.project.name}
+                        </h4>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-0.5">
                         {activeStats.project.client ? `Client: ${activeStats.project.client} • ` : ''}
-                        {activeStats.sessionCount} logged punches
+                        {activeStats.sessionCount} logged punches across all time ({activeStats.totalHours}h)
+                        {activeStats.earliestDate && activeStats.latestDate && (
+                          <span className="text-slate-400">
+                            {' '}• {formatDateMMDDYYYY(activeStats.earliestDate)} to {formatDateMMDDYYYY(activeStats.latestDate)}
+                          </span>
+                        )}
                       </p>
+                      {activeStats.activeQuartersBreakdown.length > 0 && (
+                        <div className="flex items-center gap-1.5 flex-wrap pt-2">
+                          <span className="text-[10px] font-bold uppercase text-slate-400 mr-0.5">
+                            Quarter Activity:
+                          </span>
+                          {activeStats.activeQuartersBreakdown.map((q) => (
+                            <span
+                              key={q.quarter}
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-white border border-slate-200 text-slate-700 shadow-2xs"
+                            >
+                              <span className="font-bold text-slate-900">{q.quarter}:</span>
+                              <span className="font-mono text-indigo-600">{q.hours}h</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -1370,6 +1455,30 @@ export function ProjectsModal({
                                 <RotateCcw className="w-3 h-3" />
                                 <span>Reset Filter</span>
                               </button>
+                            )}
+
+                            {/* Quarter Selector Dropdown */}
+                            {availableQuarters && availableQuarters.length > 0 && (
+                              <div className="w-full pt-1.5 mt-1 border-t border-slate-200/80 flex items-center gap-2">
+                                <label className="text-[11px] font-bold text-slate-500 whitespace-nowrap">
+                                  Filter by Quarter:
+                                </label>
+                                <select
+                                  value={selectedQuarterFilter}
+                                  onChange={(e) => {
+                                    setSelectedQuarterFilter(e.target.value);
+                                    if (e.target.value !== 'all') {
+                                      setRangePreset('custom');
+                                    }
+                                  }}
+                                  className="text-xs font-semibold py-1 px-2.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-800 outline-none cursor-pointer hover:bg-slate-100 shadow-2xs"
+                                >
+                                  <option value="all">All Quarters</option>
+                                  {availableQuarters.map((q) => (
+                                    <option key={q} value={q}>{q}</option>
+                                  ))}
+                                </select>
+                              </div>
                             )}
                           </div>
                         )}
@@ -1622,7 +1731,17 @@ export function ProjectsModal({
                                     step="1"
                                     value={editLogInTime}
                                     onChange={(e) => setEditLogInTime(e.target.value)}
-                                    className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md font-mono text-emerald-800 font-semibold"
+                                    onClick={(e) => {
+                                      try {
+                                        e.currentTarget.showPicker();
+                                      } catch {}
+                                    }}
+                                    onPointerDown={(e) => {
+                                      try {
+                                        (e.currentTarget as any).showPicker?.();
+                                      } catch {}
+                                    }}
+                                    className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md font-mono text-emerald-800 font-semibold cursor-pointer"
                                   />
                                 </div>
 
@@ -1635,7 +1754,17 @@ export function ProjectsModal({
                                     step="1"
                                     value={editLogOutTime}
                                     onChange={(e) => setEditLogOutTime(e.target.value)}
-                                    className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md font-mono text-rose-800 font-semibold"
+                                    onClick={(e) => {
+                                      try {
+                                        e.currentTarget.showPicker();
+                                      } catch {}
+                                    }}
+                                    onPointerDown={(e) => {
+                                      try {
+                                        (e.currentTarget as any).showPicker?.();
+                                      } catch {}
+                                    }}
+                                    className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md font-mono text-rose-800 font-semibold cursor-pointer"
                                   />
                                 </div>
                               </div>
@@ -1679,10 +1808,15 @@ export function ProjectsModal({
                             className="p-3 rounded-xl bg-slate-50/90 border border-slate-200/90 text-xs space-y-1.5 hover:bg-slate-50 transition-colors shadow-2xs group"
                           >
                             <div className="flex items-center justify-between gap-2">
-                              {/* Left: Date */}
-                              <div className="font-bold text-slate-900 font-mono flex items-center gap-1.5 text-xs">
-                                <Calendar className="w-3.5 h-3.5 text-slate-500" />
-                                <span>{formatDateMMDDYYYY(log.date)}</span>
+                              {/* Left: Date & Quarter Badge */}
+                              <div className="font-bold text-slate-900 font-mono flex items-center gap-2 text-xs">
+                                <div className="flex items-center gap-1.5">
+                                  <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                                  <span>{formatDateMMDDYYYY(log.date)}</span>
+                                </div>
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-white text-slate-600 border border-slate-200 shadow-2xs">
+                                  {log.quarterName}
+                                </span>
                               </div>
 
                               {/* Right: Edit & Remove Action Buttons */}

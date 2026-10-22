@@ -4,7 +4,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import nodemailer from 'nodemailer';
 import { createServer as createViteServer } from 'vite';
-import { APP_VERSION } from './src/version';
+import { APP_VERSION, APP_BUILD_DATE, APP_BUILD_ID } from './src/version';
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -586,9 +586,8 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', version: APP_VERSION, timestamp: new Date().toISOString() });
 });
 
-// Publication Version API: Ensures clients (including older v2.6.0 clients) detect new builds and trigger update
-const SERVER_START_TIME = new Date().toISOString();
-const SERVER_BUILD_ID = process.env.BUILD_ID || `build_${APP_VERSION}_${SERVER_START_TIME}`;
+// Publication Version API: Ensures clients detect new builds and trigger update reliably
+const SERVER_BUILD_ID = process.env.BUILD_ID || APP_BUILD_ID;
 app.get(['/api/version', '/api/version/check', '/api/publication', '/api/check-update'], (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
   res.setHeader('Pragma', 'no-cache');
@@ -596,7 +595,7 @@ app.get(['/api/version', '/api/version/check', '/api/publication', '/api/check-u
   res.json({
     version: APP_VERSION,
     buildId: SERVER_BUILD_ID,
-    publishedAt: SERVER_START_TIME,
+    publishedAt: APP_BUILD_DATE,
     timestamp: new Date().toISOString(),
     latestVersion: APP_VERSION,
   });
@@ -1436,7 +1435,10 @@ app.post(['/api/sync', '/api/sync/push', '/api/sync/save'], (req, res) => {
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);

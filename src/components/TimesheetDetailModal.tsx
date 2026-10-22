@@ -12,7 +12,8 @@ import {
   Calendar,
   FolderKanban,
   FileText,
-  ChevronDown
+  ChevronDown,
+  Lock
 } from 'lucide-react';
 import { DayRecord, PunchPair, Project } from '../types';
 import { 
@@ -23,7 +24,8 @@ import {
   formatDateMMDDYYYY,
   parseCSVToRecordsAndProjects,
   deleteSessionFromRecords,
-  normalizeTimeToHHMMSS
+  normalizeTimeToHHMMSS,
+  getQuarterName
 } from '../utils/timeCalculations';
 import { recordDeletedSession, recordDeletedDate } from '../utils/storage';
 import { ConfirmModal, ConfirmDialogOptions } from './ConfirmModal';
@@ -35,8 +37,11 @@ interface TimesheetDetailModalProps {
   quarterName: string;
   records: DayRecord[];
   projects?: Project[];
+  availableQuarters?: string[];
+  onQuarterChange?: (quarter: string) => void;
   onSaveRecords: (updated: DayRecord[]) => void;
   onSaveProjects?: (updated: Project[]) => void;
+  onImportCSVRecords?: (parsedRecords: DayRecord[], parsedProjects: Project[], fileName?: string) => void;
   onExportCSV: () => void;
   onOpenDateEditor?: (dateStr: string) => void;
   themeColor?: string;
@@ -48,8 +53,11 @@ export function TimesheetDetailModal({
   quarterName,
   records,
   projects = [],
+  availableQuarters = [],
+  onQuarterChange,
   onSaveRecords,
   onSaveProjects,
+  onImportCSVRecords,
   onExportCSV,
   onOpenDateEditor,
   themeColor = '#0284C7',
@@ -67,6 +75,8 @@ export function TimesheetDetailModal({
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
 
   if (!isOpen) return null;
+
+  const isClosedQuarter = quarterName !== getQuarterName();
 
   const sortedRecords = [...records].sort((a, b) => a.date.localeCompare(b.date));
 
@@ -134,34 +144,54 @@ export function TimesheetDetailModal({
 
   const handleSaveEdit = () => {
     if (!editForm) return;
-    // Clean up empty punches so ghost blank pairs are removed and normalize time strings
-    const cleanPunches = (editForm.punches || [])
-      .filter(
-        (p) => Boolean(p.inTime && p.inTime.trim() !== '') || Boolean(p.outTime && p.outTime.trim() !== '')
-      )
-      .map((p) => ({
-        ...p,
-        inTime: p.inTime?.trim() ? normalizeTimeToHHMMSS(p.inTime) : '',
-        outTime: p.outTime?.trim() ? normalizeTimeToHHMMSS(p.outTime) : '',
-      }));
-    const updatedRecord: DayRecord = {
-      ...editForm,
-      punches: cleanPunches,
-      notes: editForm.notes?.trim() || undefined,
-      updatedAt: new Date().toISOString(),
-    };
-    let updated = records.map((r) => (r.date === editForm.date ? updatedRecord : r));
 
-    // For all removed punches, record tombstones and purge any multi-day linked segments!
-    for (const rem of removedMultiDayPunches) {
-      recordDeletedSession(rem, editForm.date);
-      updated = deleteSessionFromRecords(updated, editForm.date, rem);
+    const executeSave = () => {
+      // Clean up empty punches so ghost blank pairs are removed and normalize time strings
+      const cleanPunches = (editForm.punches || [])
+        .filter(
+          (p) => Boolean(p.inTime && p.inTime.trim() !== '') || Boolean(p.outTime && p.outTime.trim() !== '')
+        )
+        .map((p) => ({
+          ...p,
+          inTime: p.inTime?.trim() ? normalizeTimeToHHMMSS(p.inTime) : '',
+          outTime: p.outTime?.trim() ? normalizeTimeToHHMMSS(p.outTime) : '',
+        }));
+      const updatedRecord: DayRecord = {
+        ...editForm,
+        punches: cleanPunches,
+        notes: editForm.notes?.trim() || undefined,
+        updatedAt: new Date().toISOString(),
+      };
+      let updated = records.map((r) => (r.date === editForm.date ? updatedRecord : r));
+
+      // For all removed punches, record tombstones and purge any multi-day linked segments!
+      for (const rem of removedMultiDayPunches) {
+        recordDeletedSession(rem, editForm.date);
+        updated = deleteSessionFromRecords(updated, editForm.date, rem);
+      }
+
+      onSaveRecords(updated);
+      setRemovedMultiDayPunches([]);
+      setEditingDate(null);
+      setEditForm(null);
+    };
+
+    if (isClosedQuarter) {
+      setConfirmDialog({
+        title: 'Save Changes to Closed Quarter?',
+        message: `"${quarterName}" is an archived closed quarter. Are you sure you want to save modifications to this quarter's punches?`,
+        confirmText: `Confirm & Save to ${quarterName}`,
+        cancelText: 'Cancel',
+        variant: 'warning',
+        onConfirm: () => {
+          setConfirmDialog(null);
+          executeSave();
+        },
+      });
+      return;
     }
 
-    onSaveRecords(updated);
-    setRemovedMultiDayPunches([]);
-    setEditingDate(null);
-    setEditForm(null);
+    executeSave();
   };
 
   const handleDeleteRecord = (dateStr: string) => {
@@ -193,14 +223,34 @@ export function TimesheetDetailModal({
       alert(`An entry for date ${formatDateMMDDYYYY(newRowDate)} already exists.`);
       return;
     }
-    const newRecord: DayRecord = {
-      date: newRowDate,
-      punches: createEmptyPunches(maxSlots),
+
+    const proceedAddRow = () => {
+      const newRecord: DayRecord = {
+        date: newRowDate,
+        punches: createEmptyPunches(maxSlots),
+      };
+      const updated = [...records, newRecord];
+      onSaveRecords(updated);
+      setShowAddRow(false);
+      handleStartEdit(newRecord);
     };
-    const updated = [...records, newRecord];
-    onSaveRecords(updated);
-    setShowAddRow(false);
-    handleStartEdit(newRecord);
+
+    if (isClosedQuarter) {
+      setConfirmDialog({
+        title: 'Add Date to Closed Quarter?',
+        message: `"${quarterName}" is a closed quarter. Are you sure you want to add a new date record (${formatDateMMDDYYYY(newRowDate)}) to this archived quarter?`,
+        confirmText: `Confirm & Add to ${quarterName}`,
+        cancelText: 'Cancel',
+        variant: 'warning',
+        onConfirm: () => {
+          setConfirmDialog(null);
+          proceedAddRow();
+        },
+      });
+      return;
+    }
+
+    proceedAddRow();
   };
 
   const handleImportCSV = (e: ChangeEvent<HTMLInputElement>) => {
@@ -214,6 +264,12 @@ export function TimesheetDetailModal({
         const { records: parsedRecords, projects: parsedProjects } = parseCSVToRecordsAndProjects(text, projects);
         if (parsedRecords.length === 0 && parsedProjects.length === 0) {
           alert('Could not parse valid records or projects from CSV. Check format.');
+          return;
+        }
+
+        if (onImportCSVRecords) {
+          onImportCSVRecords(parsedRecords, parsedProjects, file.name);
+          setIsCsvMenuOpen(false);
           return;
         }
 
@@ -296,11 +352,21 @@ export function TimesheetDetailModal({
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
+            {isClosedQuarter && (
+              <span 
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200/80 shadow-2xs"
+                title="This is an archived closed quarter. Adding or modifying records requires confirmation."
+              >
+                <Lock className="w-3 h-3 text-amber-700 shrink-0" />
+                <span className="hidden md:inline">Closed Quarter</span>
+              </span>
+            )}
+
             <button
               onClick={() => setShowAddRow(!showAddRow)}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-white shadow-2xs transition-colors cursor-pointer"
               style={{ backgroundColor: themeColor }}
-              title="Add a new date row"
+              title={isClosedQuarter ? `Add a new date row to closed quarter ${quarterName} (requires confirmation)` : "Add a new date row"}
             >
               <Plus className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Add Date</span>
@@ -507,8 +573,8 @@ export function TimesheetDetailModal({
                               <td className="py-1 px-1.5 border-r border-slate-100 text-center font-mono">
                                 {isEditing && editForm ? (
                                   <input
-                                    type="text"
-                                    placeholder="HH:mm:ss"
+                                    type="time"
+                                    step="1"
                                     value={editForm.punches[slotIdx]?.inTime || ''}
                                     onChange={(e) => {
                                       const copy = { ...editForm };
@@ -516,13 +582,23 @@ export function TimesheetDetailModal({
                                       copy.punches[slotIdx].inTime = e.target.value;
                                       setEditForm(copy);
                                     }}
-                                    className="w-18 px-1 py-0.5 text-center text-xs border border-emerald-300 rounded-md bg-white focus:outline-emerald-600 font-mono"
+                                    onClick={(e) => {
+                                      try {
+                                        e.currentTarget.showPicker();
+                                      } catch {}
+                                    }}
+                                    onPointerDown={(e) => {
+                                      try {
+                                        (e.currentTarget as any).showPicker?.();
+                                      } catch {}
+                                    }}
+                                    className="w-24 px-1 py-0.5 text-center text-xs border border-emerald-300 rounded-md bg-white focus:outline-emerald-600 font-mono cursor-pointer"
                                   />
                                 ) : (
                                   <span className={pair?.inTime ? 'text-emerald-800 font-medium inline-flex items-center gap-1 justify-center' : 'text-slate-300'}>
                                     {pair?.isMultiDaySegment && (
-                                      <span title={`Cross-day segment ${pair.segmentIndex !== undefined ? pair.segmentIndex + 1 : ''}/${pair.totalSegments || ''}`} className="text-[10px]">
-                                        🌙
+                                      <span title={`Cross-day segment ${pair.segmentIndex !== undefined ? pair.segmentIndex + 1 : ''}/${pair.totalSegments || ''}`} className="text-[10px] text-indigo-600 font-semibold">
+                                        [Multi-day]
                                       </span>
                                     )}
                                     {pair?.inTime || '—'}
@@ -535,8 +611,8 @@ export function TimesheetDetailModal({
                                 {isEditing && editForm ? (
                                   <div className="flex items-center gap-1 justify-center">
                                     <input
-                                      type="text"
-                                      placeholder="HH:mm:ss"
+                                      type="time"
+                                      step="1"
                                       value={editForm.punches[slotIdx]?.outTime || ''}
                                       onChange={(e) => {
                                         const copy = { ...editForm };
@@ -544,7 +620,17 @@ export function TimesheetDetailModal({
                                         copy.punches[slotIdx].outTime = e.target.value;
                                         setEditForm(copy);
                                       }}
-                                      className="w-16 px-1 py-0.5 text-center text-xs border border-emerald-300 rounded-md bg-white focus:outline-emerald-600 font-mono"
+                                      onClick={(e) => {
+                                        try {
+                                          e.currentTarget.showPicker();
+                                        } catch {}
+                                      }}
+                                      onPointerDown={(e) => {
+                                        try {
+                                          (e.currentTarget as any).showPicker?.();
+                                        } catch {}
+                                      }}
+                                      className="w-24 px-1 py-0.5 text-center text-xs border border-emerald-300 rounded-md bg-white focus:outline-emerald-600 font-mono cursor-pointer"
                                     />
                                     {(editForm.punches.length > 1 || Boolean(editForm.punches[slotIdx]?.inTime || editForm.punches[slotIdx]?.outTime)) && (
                                       <button

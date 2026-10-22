@@ -1,5 +1,5 @@
 // Service Worker for Offline PWA Support with Strict Network-First Strategy for New Releases
-const CACHE_NAME = 'stt-pwa-v4';
+const CACHE_NAME = 'stt-pwa-v6';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',

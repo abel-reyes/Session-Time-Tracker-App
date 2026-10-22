@@ -1,6 +1,37 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <script>
+      // Suppress Vite HMR WebSocket connection errors in sandbox/preview environment
+      (function() {
+        const origConsoleError = console.error;
+        console.error = function(...args) {
+          if (args.some(arg => typeof arg === 'string' && (arg.includes('[vite] failed to connect to websocket') || arg.includes('WebSocket closed without opened')))) {
+            return;
+          }
+          origConsoleError.apply(console, args);
+        };
+        window.addEventListener('unhandledrejection', function(event) {
+          const reason = event.reason;
+          if (reason && (
+            (reason.message && (reason.message.includes('WebSocket') || reason.message.includes('vite'))) ||
+            (reason.stack && (reason.stack.includes('@vite/client') || reason.stack.includes('createWebSocketModuleRunnerTransport')))
+          )) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+        window.addEventListener('error', function(event) {
+          if (
+            (event.message && (event.message.includes('WebSocket') || event.message.includes('vite'))) ||
+            (event.filename && event.filename.includes('@vite/client'))
+          ) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+      })();
+    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />

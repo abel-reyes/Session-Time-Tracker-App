@@ -146,6 +146,15 @@ export interface WeeklyChartData {
 
 export type TextSizeOption = 'default' | 'large' | 'larger' | 'largest';
 
+export interface QuarterGoalConfig {
+  enableGoals: boolean;
+  weeklyGoalHours: number;
+  dailyGoalHours: number;
+  sourceQuarter?: string;
+  isExplicit?: boolean;
+  updatedAt?: string;
+}
+
 export interface AppSettings {
   appTitle?: string; // Custom app name/label e.g. "Session Time Tracker" or custom workspace
   userName: string;
@@ -160,6 +169,7 @@ export interface AppSettings {
   floatingClockPosition?: 'bottom-left' | 'bottom-right'; // Screen side placement (default: bottom-left)
   weeklyGoalHours: number;
   dailyGoalHours: number;
+  quarterGoals?: Record<string, QuarterGoalConfig>; // Per-quarter goals with auto-population from previous quarters
   soundEnabled: boolean;
   gasEndpointUrl?: string; // Optional Google Apps Script Web App URL
   timeFormat24h: boolean;

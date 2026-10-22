@@ -31,3 +31,30 @@ html {
 .animate-fadeIn {
   animation: fadeIn 0.2s ease-out forwards;
 }
+
+input[type="time"] {
+  position: relative;
+  cursor: pointer;
+}
+
+/* Make the calendar/clock picker indicator cover the entire time input bounds
+   so touching anywhere on the time field directly triggers the native scrolling wheels picker
+   without having to hit a tiny inline clock icon */
+input[type="time"]::-webkit-calendar-picker-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+input[type="time"]::-webkit-datetime-edit {
+  pointer-events: none;
+}
+

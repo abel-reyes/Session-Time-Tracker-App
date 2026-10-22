@@ -27,6 +27,7 @@ interface MetricsOverviewProps {
   settings: AppSettings;
   liveExtraSeconds: number;
   records?: DayRecord[];
+  previousQuarterRecords?: DayRecord[];
   projects?: Project[];
   activeQuarter?: string;
   themeColor?: string;
@@ -39,6 +40,7 @@ export function MetricsOverview({
   settings, 
   liveExtraSeconds,
   records = [],
+  previousQuarterRecords = [],
   projects = [],
   activeQuarter = getQuarterName(),
   themeColor = '#0284C7',
@@ -70,14 +72,16 @@ export function MetricsOverview({
       projects,
       currentMondayStr,
       currentSundayStr,
-      liveExtraSeconds
+      liveExtraSeconds,
+      undefined,
+      previousQuarterRecords
     );
-  }, [records, projects, currentMondayStr, currentSundayStr, liveExtraSeconds]);
+  }, [records, projects, currentMondayStr, currentSundayStr, liveExtraSeconds, previousQuarterRecords]);
 
   // Compute breakdown of all weeks of the quarter for the modal
   const quarterWeeks = useMemo(() => {
-    return getQuarterWeeksBreakdown(records, activeQuarter, liveExtraSeconds);
-  }, [records, activeQuarter, liveExtraSeconds]);
+    return getQuarterWeeksBreakdown(records, activeQuarter, liveExtraSeconds, new Date(), previousQuarterRecords);
+  }, [records, activeQuarter, liveExtraSeconds, previousQuarterRecords]);
 
   const weeklyGoalHours = settings.weeklyGoalHours || 0;
   const weeklyGoalSeconds = weeklyGoalHours * 3600;
@@ -286,6 +290,7 @@ export function MetricsOverview({
           themeColor={themeColor}
           secondaryColor={secondaryColor}
           records={records}
+          previousQuarterRecords={previousQuarterRecords}
           projects={projects}
           liveExtraSeconds={liveExtraSeconds}
         />

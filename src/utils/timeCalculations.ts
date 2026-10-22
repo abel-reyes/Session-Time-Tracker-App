@@ -6,6 +6,101 @@ export function getQuarterName(date: Date = new Date()): string {
   return `Q${quarterNum} ${date.getFullYear()}`;
 }
 
+/**
+ * Calculates the name of the quarter immediately preceding the given quarter or date.
+ * e.g., "Q4 2026" -> "Q3 2026", "Q1 2027" -> "Q4 2026".
+ */
+export function getPreviousQuarterName(quarterNameOrDate: string | Date = new Date()): string {
+  if (quarterNameOrDate instanceof Date) {
+    const prevDate = new Date(quarterNameOrDate);
+    prevDate.setMonth(prevDate.getMonth() - 3);
+    return getQuarterName(prevDate);
+  }
+  const match = String(quarterNameOrDate).trim().match(/^Q([1-4])\s*(\d{4})/i);
+  if (match) {
+    let q = parseInt(match[1], 10);
+    let y = parseInt(match[2], 10);
+    if (q === 1) {
+      q = 4;
+      y -= 1;
+    } else {
+      q -= 1;
+    }
+    return `Q${q} ${y}`;
+  }
+  const now = new Date();
+  now.setMonth(now.getMonth() - 3);
+  return getQuarterName(now);
+}
+
+export function parseQuarterFromFileName(fileName?: string): string | null {
+  if (!fileName) return null;
+  const match = fileName.match(/Q([1-4])[\s_.-]*(\d{4})/i);
+  if (match) {
+    return `Q${match[1]} ${match[2]}`;
+  }
+  return null;
+}
+
+/**
+ * Compares two quarter names in descending chronological order (e.g. Q4 2026 > Q3 2026 > Q1 2026 > Q4 2025).
+ */
+export function compareQuartersDesc(a: string, b: string): number {
+  const matchA = a.match(/^Q([1-4])\s*(\d{4})/i);
+  const matchB = b.match(/^Q([1-4])\s*(\d{4})/i);
+  if (matchA && matchB) {
+    const yearA = parseInt(matchA[2], 10);
+    const quarterA = parseInt(matchA[1], 10);
+    const yearB = parseInt(matchB[2], 10);
+    const quarterB = parseInt(matchB[1], 10);
+    if (yearA !== yearB) return yearB - yearA;
+    return quarterB - quarterA;
+  }
+  return b.localeCompare(a);
+}
+
+/**
+ * Normalizes various date string representations (YYYY-MM-DD, MM/DD/YYYY, YYYY/MM/DD) into YYYY-MM-DD.
+ */
+export function normalizeDateToYYYYMMDD(raw?: string | null): string | null {
+  if (!raw) return null;
+  const clean = raw.trim().replace(/^["']|["']$/g, '');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) return clean;
+  // Match YYYY/MM/DD or YYYY.MM.DD
+  const ymdMatch = clean.match(/^(\d{4})[\/\.](\d{1,2})[\/\.](\d{1,2})$/);
+  if (ymdMatch) {
+    return `${ymdMatch[1]}-${ymdMatch[2].padStart(2, '0')}-${ymdMatch[3].padStart(2, '0')}`;
+  }
+  // Match MM/DD/YYYY or M/D/YYYY or MM-DD-YYYY
+  const mdyMatch = clean.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+  if (mdyMatch) {
+    return `${mdyMatch[3]}-${mdyMatch[1].padStart(2, '0')}-${mdyMatch[2].padStart(2, '0')}`;
+  }
+  // Fallback try Date parse
+  const d = new Date(clean);
+  if (!isNaN(d.getTime())) {
+    return formatDateToYYYYMMDD(d);
+  }
+  return null;
+}
+
+/**
+ * Resolves the quarter name (e.g. "Q3 2026") from any date string.
+ */
+export function getQuarterNameFromDateStr(dateStr: string): string {
+  const norm = normalizeDateToYYYYMMDD(dateStr);
+  if (norm) {
+    const parts = norm.split('-');
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10);
+    const d = parseInt(parts[2], 10);
+    if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+      return getQuarterName(new Date(y, m - 1, d));
+    }
+  }
+  return getQuarterName();
+}
+
 export function formatDateToYYYYMMDD(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -477,6 +572,7 @@ export function deleteSessionFromRecords(
 }
 
 export function formatSecondsToHHMMSS(totalSeconds: number): string {
+  if (isNaN(totalSeconds) || !isFinite(totalSeconds)) return '00:00:00';
   const safe = Math.max(0, Math.floor(totalSeconds));
   const h = Math.floor(safe / 3600);
   const m = Math.floor((safe % 3600) / 60);
@@ -485,6 +581,7 @@ export function formatSecondsToHHMMSS(totalSeconds: number): string {
 }
 
 export function formatSecondsToHuman(totalSeconds: number): string {
+  if (isNaN(totalSeconds) || !isFinite(totalSeconds)) return '0s';
   const safe = Math.max(0, Math.floor(totalSeconds));
   const h = Math.floor(safe / 3600);
   const m = Math.floor((safe % 3600) / 60);
@@ -555,7 +652,8 @@ export function getTodayMondayDate(refDate: Date = new Date()): Date {
 export function calculateMetrics(
   records: DayRecord[],
   todayStr: string = formatDateToYYYYMMDD(new Date()),
-  projects: Project[] = []
+  projects: Project[] = [],
+  previousQuarterRecords: DayRecord[] = []
 ): DashboardMetrics {
   const now = new Date();
   const monday = getTodayMondayDate(now);
@@ -582,13 +680,28 @@ export function calculateMetrics(
   const projectSecondsMap = new Map<string, number>();
   const recentList: DashboardMetrics['recent'] = [];
 
-  // Sort records by date ascending
-  const sorted = [...records].sort((a, b) => a.date.localeCompare(b.date));
+  // Merge records from current quarter and previous quarter to ensure 
+  // weekly metrics, streak, and recent history stay continuous across quarter boundaries
+  const recordsMap = new Map<string, DayRecord>();
+  if (previousQuarterRecords && Array.isArray(previousQuarterRecords)) {
+    for (const r of previousQuarterRecords) {
+      if (r && r.date) recordsMap.set(r.date, r);
+    }
+  }
+  if (records && Array.isArray(records)) {
+    for (const r of records) {
+      if (r && r.date) recordsMap.set(r.date, r);
+    }
+  }
+
+  const sorted = Array.from(recordsMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+  const activeQuarterName = getQuarterName(new Date(todayStr + 'T00:00:00'));
 
   for (const record of sorted) {
     if (!record.date) continue;
     const dateObj = new Date(record.date + 'T00:00:00');
     const isWeekend = dateObj.getDay() === 0 || dateObj.getDay() === 6;
+    const isRecordInQuarter = getQuarterName(dateObj) === activeQuarterName;
 
     let daySec = 0;
     let lastIn = '--';
@@ -611,31 +724,34 @@ export function calculateMetrics(
         const dur = getDurationInSeconds(p.inTime, p.outTime, p.inDate, p.outDate);
         daySec += dur;
 
-        const projId = p.projectId || record.primaryProjectId || 'unassigned';
-        projectSecondsMap.set(projId, (projectSecondsMap.get(projId) || 0) + dur);
+        if (isRecordInQuarter) {
+          const projId = p.projectId || record.primaryProjectId || 'unassigned';
+          projectSecondsMap.set(projId, (projectSecondsMap.get(projId) || 0) + dur);
 
-        if (p.projectName) {
-          projectNamesUsed.add(p.projectName);
-        } else if (p.projectId) {
-          const matchProj = projects.find((pr) => pr.id === p.projectId);
-          if (matchProj) projectNamesUsed.add(matchProj.name);
+          if (p.projectName) {
+            projectNamesUsed.add(p.projectName);
+          } else if (p.projectId) {
+            const matchProj = projects.find((pr) => pr.id === p.projectId);
+            if (matchProj) projectNamesUsed.add(matchProj.name);
+          }
         }
       }
     }
 
-    if (daySec > 0 || punchCount > 0) {
-      daysWorkedCount++;
+    // Quarter metrics strictly count records in the active quarter
+    if (isRecordInQuarter) {
+      if (daySec > 0 || punchCount > 0) {
+        daysWorkedCount++;
+      }
+      quarterSec += daySec;
+      if (isWeekend) {
+        weekendSec += daySec;
+      } else {
+        weekdaySec += daySec;
+      }
     }
 
-    quarterSec += daySec;
-
-    if (isWeekend) {
-      weekendSec += daySec;
-    } else {
-      weekdaySec += daySec;
-    }
-
-    // Week metrics
+    // Week metrics include the full 7-day Monday–Sunday window across quarter boundaries
     if (dateObj >= monday && dateObj <= sunday) {
       weekSec += daySec;
       if (daySec > 0 || punchCount > 0) {
@@ -656,18 +772,22 @@ export function calculateMetrics(
     }
 
     const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    if (daySec > 0 || punchCount > 0 || (record.notes && record.notes.trim().length > 0)) {
-      recentList.push({
-        date: record.date,
-        dayOfWeek: dayNames[dateObj.getDay()],
-        lastIn,
-        lastOut,
-        punchCount,
-        totalSeconds: daySec,
-        totalFormatted: formatSecondsToHHMMSS(daySec),
-        projectNames: Array.from(projectNamesUsed),
-        notes: record.notes,
-      });
+    // Include in recent history if within the past 14 days
+    const diffDaysFromToday = Math.round((now.getTime() - dateObj.getTime()) / (1000 * 60 * 60 * 24));
+    if (diffDaysFromToday >= 0 && diffDaysFromToday <= 14) {
+      if (daySec > 0 || punchCount > 0 || (record.notes && record.notes.trim().length > 0)) {
+        recentList.push({
+          date: record.date,
+          dayOfWeek: dayNames[dateObj.getDay()],
+          lastIn,
+          lastOut,
+          punchCount,
+          totalSeconds: daySec,
+          totalFormatted: formatSecondsToHHMMSS(daySec),
+          projectNames: Array.from(projectNamesUsed),
+          notes: record.notes,
+        });
+      }
     }
   }
 
@@ -789,7 +909,8 @@ export function calculateMetrics(
 export function getWeeklyChartData(
   records: DayRecord[],
   refDate: Date = new Date(),
-  projects: Project[] = []
+  projects: Project[] = [],
+  previousQuarterRecords: DayRecord[] = []
 ): WeeklyChartData {
   const thisMon = getTodayMondayDate(refDate);
   const lastMon = new Date(thisMon);
@@ -807,6 +928,44 @@ export function getWeeklyChartData(
     dayDates.push(formatDateToYYYYMMDD(dObj));
   }
 
+  // Combine records from current quarter and previous quarter to ensure 
+  // seamless continuity across quarter boundaries for both This Week and Last Week.
+  const recordsMap = new Map<string, DayRecord>();
+
+  // If previousQuarterRecords was not explicitly passed, attempt to load from localStorage if in browser
+  let extraRecords = previousQuarterRecords;
+  if ((!extraRecords || extraRecords.length === 0) && typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    const lastMonQuarter = getQuarterName(lastMon);
+    try {
+      const key = 'tracker_records_' + lastMonQuarter.replace(/\s+/g, '_');
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          extraRecords = parsed;
+        }
+      }
+    } catch {
+      // Storage access fail-safe
+    }
+  }
+
+  if (extraRecords && Array.isArray(extraRecords)) {
+    for (const r of extraRecords) {
+      if (r && r.date) recordsMap.set(r.date, r);
+    }
+  }
+
+  // Active records take precedence over older cached data
+  if (records && Array.isArray(records)) {
+    for (const r of records) {
+      if (r && r.date) recordsMap.set(r.date, r);
+    }
+  }
+
+  const combinedRecords = Array.from(recordsMap.values());
+
+  // 1. Calculate Weekday / Weekend ratio strictly from the active quarter's records
   let totalWeekdayHours = 0;
   let totalWeekendHours = 0;
 
@@ -831,6 +990,23 @@ export function getWeeklyChartData(
     } else {
       totalWeekdayHours += hours;
     }
+  }
+
+  // 2. Populate This Week and Last Week datasets from combined records (spanning across quarters)
+  for (const record of combinedRecords) {
+    if (!record.date) continue;
+    const dateObj = new Date(record.date + 'T00:00:00');
+    dateObj.setHours(0, 0, 0, 0);
+
+    let dailySec = 0;
+    const punches = record.punches || [];
+    for (let i = 0; i < punches.length; i++) {
+      const p = punches[i];
+      if (p.inTime && p.outTime) {
+        dailySec += getDurationInSeconds(p.inTime, p.outTime, p.inDate, p.outDate);
+      }
+    }
+    const hours = dailySec / 3600;
 
     // Check if falls in this week (Monday to Sunday)
     const diffThisDays = Math.round((dateObj.getTime() - thisMon.getTime()) / (1000 * 60 * 60 * 24));
@@ -892,7 +1068,7 @@ export function getWeeklyChartData(
       }
     }
 
-    // Check if falls in last week
+    // Check if falls in last week (Monday to Sunday)
     const diffLastDays = Math.round((dateObj.getTime() - lastMon.getTime()) / (1000 * 60 * 60 * 24));
     if (diffLastDays >= 0 && diffLastDays < 7) {
       lastWeekHours[diffLastDays] += hours;
@@ -933,6 +1109,7 @@ export function generateQuarterCSV(
   }
 
   const rows: string[] = [];
+  rows.push(`# QUARTER: ${quarterName}`);
 
   // If projects exist, prepend project metadata section with '# PROJECT:' prefix for clean, backwards-compatible parsing
   const activeProjects = projects.filter(p => !p.isDeleted);
@@ -994,6 +1171,7 @@ export function generateQuarterCSV(
 export interface CSVParseResult {
   records: DayRecord[];
   projects: Project[];
+  detectedQuarter?: string;
 }
 
 export function parseCSVToRecordsAndProjects(csvText: string, existingProjects: Project[] = []): CSVParseResult {
@@ -1003,6 +1181,7 @@ export function parseCSVToRecordsAndProjects(csvText: string, existingProjects: 
   const parsedProjects: Project[] = [];
   const records: DayRecord[] = [];
   let inProjectsSection = false;
+  let detectedQuarter: string | undefined = undefined;
 
   // Helper to split a CSV line respecting double quotes
   const parseLine = (line: string): string[] => {
@@ -1086,6 +1265,15 @@ export function parseCSVToRecordsAndProjects(csvText: string, existingProjects: 
       continue;
     }
 
+    // Check for Quarter comment metadata
+    if (rawLine.startsWith('# QUARTER:') || rawLine.startsWith('# Quarter:') || rawLine.startsWith('# quarter:')) {
+      const match = rawLine.match(/^#\s*quarter:\s*(.+)$/i);
+      if (match && match[1]) {
+        detectedQuarter = match[1].trim();
+      }
+      continue;
+    }
+
     // Skip comment lines
     if (rawLine.startsWith('#')) continue;
 
@@ -1095,14 +1283,15 @@ export function parseCSVToRecordsAndProjects(csvText: string, existingProjects: 
     }
 
     const cols = parseLine(rawLine);
-    const date = cols[0]?.replace(/^["']|["']$/g, '');
-    if (!date || !date.match(/^\d{4}-\d{2}-\d{2}$/)) continue;
+    const date = normalizeDateToYYYYMMDD(cols[0]);
+    if (!date) continue;
 
     const punches: PunchPair[] = [];
     const isNewFormat = cols.length > 12;
     const stride = isNewFormat ? 4 : 2;
+    const maxPunchCol = cols.length <= 4 ? cols.length : cols.length - 2;
 
-    for (let p = 1; p < cols.length - 2; p += stride) {
+    for (let p = 1; p < maxPunchCol; p += stride) {
       const inVal = (cols[p] || '').replace(/^["']|["']$/g, '');
       const outVal = (cols[p + 1] || '').replace(/^["']|["']$/g, '');
       const projName = isNewFormat ? (cols[p + 2] || '').replace(/^["']|["']$/g, '') : '';
@@ -1161,7 +1350,7 @@ export function parseCSVToRecordsAndProjects(csvText: string, existingProjects: 
     }
   }
 
-  return { records, projects: parsedProjects };
+  return { records, projects: parsedProjects, detectedQuarter };
 }
 
 export function parseCSVToRecords(csvText: string): DayRecord[] {
@@ -1215,7 +1404,8 @@ export function getQuarterWeeksBreakdown(
   records: DayRecord[],
   quarterName: string = getQuarterName(),
   liveExtraSeconds: number = 0,
-  refDate: Date = new Date()
+  refDate: Date = new Date(),
+  previousQuarterRecords: DayRecord[] = []
 ): QuarterWeekSummary[] {
   // Determine quarter start & end dates
   const match = quarterName.match(/Q([1-4])\s*(\d{4})/i);
@@ -1236,8 +1426,15 @@ export function getQuarterWeeksBreakdown(
   const currentMonday = getTodayMondayDate(refDate);
   const currentMondayStr = formatDateToYYYYMMDD(currentMonday);
   
-  // Index all records by date for fast lookup
+  // Index all records by date for fast lookup (merging previous quarter for Week 1)
   const recordMap = new Map<string, DayRecord>();
+  if (previousQuarterRecords && Array.isArray(previousQuarterRecords)) {
+    for (const r of previousQuarterRecords) {
+      if (r && r.date) {
+        recordMap.set(r.date, r);
+      }
+    }
+  }
   for (const r of records) {
     if (r.date) {
       recordMap.set(r.date, r);
@@ -1352,7 +1549,8 @@ export function calculateDateRangeBillable(
   startDateStr: string,
   endDateStr: string,
   liveExtraSeconds: number = 0,
-  liveProjectId?: string
+  liveProjectId?: string,
+  previousQuarterRecords: DayRecord[] = []
 ): WeeklyBillableSummary {
   const projMap = new Map<string, Project>();
   projects.forEach((p) => {
@@ -1362,7 +1560,17 @@ export function calculateDateRangeBillable(
 
   const totalsByProjId = new Map<string, { seconds: number; project: Project }>();
 
-  records.forEach((rec) => {
+  const recordsMap = new Map<string, DayRecord>();
+  if (previousQuarterRecords && Array.isArray(previousQuarterRecords)) {
+    for (const r of previousQuarterRecords) {
+      if (r && r.date) recordsMap.set(r.date, r);
+    }
+  }
+  for (const r of records) {
+    if (r && r.date) recordsMap.set(r.date, r);
+  }
+
+  recordsMap.forEach((rec) => {
     if (rec.date >= startDateStr && rec.date <= endDateStr && rec.punches) {
       rec.punches.forEach((p) => {
         let sec = 0;

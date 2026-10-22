@@ -1,5 +1,5 @@
-import { DayRecord, AppSettings, QuarterData, Project, SuggestionTicket, SuggestionStatus, SyncTombstones, PunchPair, AuthCheckResult } from '../types';
-import { getQuarterName, formatDateToYYYYMMDD, createEmptyPunches, getTodayMondayDate, normalizeTimeStr } from './timeCalculations';
+import { DayRecord, AppSettings, QuarterData, Project, SuggestionTicket, SuggestionStatus, SyncTombstones, PunchPair, AuthCheckResult, QuarterGoalConfig } from '../types';
+import { getQuarterName, formatDateToYYYYMMDD, createEmptyPunches, getTodayMondayDate, normalizeTimeStr, getPreviousQuarterName, compareQuartersDesc } from './timeCalculations';
 
 export const CREATOR_EMAIL = 'reyesabel36@gmail.com';
 
@@ -17,6 +17,9 @@ const STORAGE_KEYS = {
   LAST_SYNC: 'stt_last_sync_v2',
   DEVICE_CLIENT_ID: 'stt_device_client_id_v2',
   TOMBSTONES: 'stt_tombstones_v2',
+  LAST_SELECTED_PROJECT: 'stt_last_selected_project_v2',
+  QUARTER_GOALS: 'stt_quarter_goals_v2',
+  ACCOUNT_ESTABLISHED: 'stt_account_established_v2',
 };
 
 export interface AppUsageStats {
@@ -85,8 +88,23 @@ export const DEFAULT_SETTINGS: AppSettings = {
 export function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
-    if (!raw) return DEFAULT_SETTINGS;
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    const cachedQuarterGoals = loadAllQuarterGoals();
+    if (!raw) {
+      return {
+        ...DEFAULT_SETTINGS,
+        quarterGoals: cachedQuarterGoals,
+      };
+    }
+    const parsed = JSON.parse(raw);
+    const mergedQuarterGoals = {
+      ...cachedQuarterGoals,
+      ...(parsed.quarterGoals || {}),
+    };
+    return {
+      ...DEFAULT_SETTINGS,
+      ...parsed,
+      quarterGoals: mergedQuarterGoals,
+    };
   } catch {
     return DEFAULT_SETTINGS;
   }
@@ -95,9 +113,253 @@ export function loadSettings(): AppSettings {
 export function saveSettings(settings: AppSettings): void {
   try {
     localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+    if (settings.quarterGoals) {
+      saveAllQuarterGoals(settings.quarterGoals);
+    }
   } catch {
     // Storage full or unavailable
   }
+}
+
+export function hasConfiguredGoal(g?: QuarterGoalConfig | null): boolean {
+  if (!g) return false;
+  if (g.isExplicit) return true;
+  return (
+    (typeof g.weeklyGoalHours === 'number' && g.weeklyGoalHours > 0) ||
+    (typeof g.dailyGoalHours === 'number' && g.dailyGoalHours > 0) ||
+    g.enableGoals === true
+  );
+}
+
+export function loadAllQuarterGoals(): Record<string, QuarterGoalConfig> {
+  try {
+    if (typeof localStorage === 'undefined') return {};
+    const raw = localStorage.getItem(STORAGE_KEYS.QUARTER_GOALS);
+    if (!raw) {
+      const legacyRaw = localStorage.getItem('stt_quarter_goals');
+      if (legacyRaw) {
+        try {
+          const parsedLegacy = JSON.parse(legacyRaw);
+          if (parsedLegacy && typeof parsedLegacy === 'object') {
+            localStorage.setItem(STORAGE_KEYS.QUARTER_GOALS, legacyRaw);
+            return parsedLegacy;
+          }
+        } catch {}
+      }
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveAllQuarterGoals(goals: Record<string, QuarterGoalConfig>): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(STORAGE_KEYS.QUARTER_GOALS, JSON.stringify(goals));
+  } catch {
+    // Storage full
+  }
+}
+
+/**
+ * Searches backward to find the most recent previous quarter with a configured goal.
+ */
+export function findPreviousConfiguredGoal(
+  fromQuarter: string,
+  settings?: AppSettings
+): { quarter: string; goal: QuarterGoalConfig } | null {
+  const allGoals: Record<string, QuarterGoalConfig> = {
+    ...loadAllQuarterGoals(),
+    ...(settings?.quarterGoals || {}),
+  };
+
+  // 1. Search backward step-by-step up to 12 quarters (3 years)
+  let currQ = fromQuarter;
+  for (let i = 0; i < 12; i++) {
+    const prevQ = getPreviousQuarterName(currQ);
+    if (!prevQ) break;
+    if (hasConfiguredGoal(allGoals[prevQ])) {
+      return { quarter: prevQ, goal: allGoals[prevQ] };
+    }
+    currQ = prevQ;
+  }
+
+  // 2. Search all recorded quarters in allGoals sorted newest-to-oldest
+  const sorted = Object.keys(allGoals)
+    .filter((q) => q !== fromQuarter && hasConfiguredGoal(allGoals[q]))
+    .sort((a, b) => b.localeCompare(a));
+  if (sorted.length > 0) {
+    return { quarter: sorted[0], goal: allGoals[sorted[0]] };
+  }
+
+  // 3. Fallback to global settings if it contains a configured goal
+  const baseSettings = settings || loadSettings();
+  if (
+    baseSettings &&
+    (baseSettings.weeklyGoalHours > 0 || baseSettings.dailyGoalHours > 0 || baseSettings.enableGoals)
+  ) {
+    return {
+      quarter: 'Prior Settings',
+      goal: {
+        enableGoals: baseSettings.enableGoals,
+        weeklyGoalHours: baseSettings.weeklyGoalHours || 0,
+        dailyGoalHours: baseSettings.dailyGoalHours || 0,
+        updatedAt: new Date().toISOString(),
+      },
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Retrieves the goal configuration for a specific quarter.
+ * If the target quarter has no goal recorded yet, it searches backward through
+ * previous quarters (e.g. Q4 2026 checks Q3 2026, Q2 2026, etc.) to automatically
+ * populate the goal from the most recent prior quarter.
+ */
+export function getQuarterGoal(
+  quarterName: string,
+  settings?: AppSettings
+): QuarterGoalConfig {
+  const allGoals: Record<string, QuarterGoalConfig> = {
+    ...loadAllQuarterGoals(),
+    ...(settings?.quarterGoals || {}),
+  };
+
+  // 1. Direct match for target quarter if it has a configured goal
+  if (hasConfiguredGoal(allGoals[quarterName])) {
+    return allGoals[quarterName];
+  }
+
+  // 2. Search backward through previous quarters
+  const prior = findPreviousConfiguredGoal(quarterName, settings);
+  if (prior) {
+    const populated: QuarterGoalConfig = {
+      enableGoals: prior.goal.enableGoals,
+      weeklyGoalHours: prior.goal.weeklyGoalHours,
+      dailyGoalHours: prior.goal.dailyGoalHours,
+      sourceQuarter: prior.goal.sourceQuarter || prior.quarter,
+      updatedAt: new Date().toISOString(),
+    };
+    allGoals[quarterName] = populated;
+    saveAllQuarterGoals(allGoals);
+    return populated;
+  }
+
+  // 3. Default unconfigured
+  return allGoals[quarterName] || {
+    enableGoals: false,
+    weeklyGoalHours: 0,
+    dailyGoalHours: 0,
+  };
+}
+
+/**
+ * Saves a goal configuration for a specific quarter, simultaneously updating
+ * AppSettings and caching in localStorage.
+ */
+export function setQuarterGoal(
+  quarterName: string,
+  goal: QuarterGoalConfig,
+  currentSettings?: AppSettings
+): AppSettings {
+  const allGoals: Record<string, QuarterGoalConfig> = {
+    ...loadAllQuarterGoals(),
+    ...(currentSettings?.quarterGoals || {}),
+  };
+
+  const updatedGoal: QuarterGoalConfig = {
+    ...goal,
+    isExplicit: true,
+    updatedAt: new Date().toISOString(),
+  };
+
+  allGoals[quarterName] = updatedGoal;
+  saveAllQuarterGoals(allGoals);
+
+  const baseSettings = currentSettings || loadSettings();
+  const updatedSettings: AppSettings = {
+    ...baseSettings,
+    enableGoals: goal.enableGoals,
+    weeklyGoalHours: goal.weeklyGoalHours,
+    dailyGoalHours: goal.dailyGoalHours,
+    quarterGoals: allGoals,
+  };
+
+  saveSettings(updatedSettings);
+  return updatedSettings;
+}
+
+/**
+ * Guarantees that a quarter has goals populated. If the quarter does not have goals yet,
+ * it pulls from the previous quarter, persists the result, and updates settings.
+ * Ensures the returned settings object always has its enableGoals and weeklyGoalHours
+ * synchronized with this quarter's goal!
+ */
+export function ensureQuarterGoalsPopulated(
+  quarterName: string,
+  settings: AppSettings
+): { settings: AppSettings; goal: QuarterGoalConfig; wasPopulated: boolean } {
+  const allGoals: Record<string, QuarterGoalConfig> = {
+    ...loadAllQuarterGoals(),
+    ...(settings.quarterGoals || {}),
+  };
+
+  // If this quarter already has an explicitly configured goal:
+  if (hasConfiguredGoal(allGoals[quarterName])) {
+    const existingGoal = allGoals[quarterName];
+    const updatedSettings: AppSettings = {
+      ...settings,
+      enableGoals: existingGoal.enableGoals,
+      weeklyGoalHours: existingGoal.weeklyGoalHours,
+      dailyGoalHours: existingGoal.dailyGoalHours,
+      quarterGoals: allGoals,
+    };
+    return { settings: updatedSettings, goal: existingGoal, wasPopulated: false };
+  }
+
+  // Quarter does NOT have a configured goal -> attempt to find and carry over from previous quarters
+  const prior = findPreviousConfiguredGoal(quarterName, settings);
+  if (prior) {
+    const populatedGoal: QuarterGoalConfig = {
+      enableGoals: prior.goal.enableGoals,
+      weeklyGoalHours: prior.goal.weeklyGoalHours,
+      dailyGoalHours: prior.goal.dailyGoalHours,
+      sourceQuarter: prior.goal.sourceQuarter || prior.quarter,
+      updatedAt: new Date().toISOString(),
+    };
+    allGoals[quarterName] = populatedGoal;
+    saveAllQuarterGoals(allGoals);
+
+    const updatedSettings: AppSettings = {
+      ...settings,
+      enableGoals: populatedGoal.enableGoals,
+      weeklyGoalHours: populatedGoal.weeklyGoalHours,
+      dailyGoalHours: populatedGoal.dailyGoalHours,
+      quarterGoals: allGoals,
+    };
+    saveSettings(updatedSettings);
+    return { settings: updatedSettings, goal: populatedGoal, wasPopulated: true };
+  }
+
+  // No configured goals exist anywhere yet
+  const defaultGoal: QuarterGoalConfig = allGoals[quarterName] || {
+    enableGoals: false,
+    weeklyGoalHours: 0,
+    dailyGoalHours: 0,
+  };
+  const updatedSettings: AppSettings = {
+    ...settings,
+    enableGoals: defaultGoal.enableGoals,
+    weeklyGoalHours: defaultGoal.weeklyGoalHours,
+    dailyGoalHours: defaultGoal.dailyGoalHours,
+    quarterGoals: allGoals,
+  };
+  return { settings: updatedSettings, goal: defaultGoal, wasPopulated: false };
 }
 
 export function loadUserEmail(): string {
@@ -444,6 +706,74 @@ export function saveProjects(projects: Project[]): void {
   }
 }
 
+export function loadLastSelectedProjectId(): string | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    return localStorage.getItem(STORAGE_KEYS.LAST_SELECTED_PROJECT);
+  } catch {
+    return null;
+  }
+}
+
+export function saveLastSelectedProjectId(projectId: string): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (projectId !== undefined) {
+      localStorage.setItem(STORAGE_KEYS.LAST_SELECTED_PROJECT, projectId);
+    }
+  } catch {
+    // Storage full or restricted
+  }
+}
+
+export function getInitialSelectedProjectId(
+  savedId: string | null,
+  records: DayRecord[],
+  projects: Project[]
+): string {
+  // 1. If explicitly saved in localStorage by the user (including '' for unassigned)
+  if (savedId !== null && savedId !== undefined) {
+    if (savedId === '') return '';
+    if (projects.some((p) => p.id === savedId && !p.archived)) {
+      return savedId;
+    }
+  }
+
+  // 2. Check for active open punch across records
+  for (let r = records.length - 1; r >= 0; r--) {
+    const punches = records[r]?.punches;
+    if (punches && Array.isArray(punches)) {
+      for (let p = punches.length - 1; p >= 0; p--) {
+        const punch = punches[p];
+        if (punch.inTime && !punch.outTime && punch.projectId) {
+          if (projects.some((proj) => proj.id === punch.projectId && !proj.archived)) {
+            return punch.projectId;
+          }
+        }
+      }
+    }
+  }
+
+  // 3. Check for most recent completed punch with a valid project
+  for (let r = records.length - 1; r >= 0; r--) {
+    const punches = records[r]?.punches;
+    if (punches && Array.isArray(punches)) {
+      for (let p = punches.length - 1; p >= 0; p--) {
+        const punch = punches[p];
+        if (punch.projectId) {
+          if (projects.some((proj) => proj.id === punch.projectId && !proj.archived)) {
+            return punch.projectId;
+          }
+        }
+      }
+    }
+  }
+
+  // 4. Default to first active project if available
+  const firstActive = projects.find((p) => !p.archived);
+  return firstActive ? firstActive.id : (projects[0]?.id || '');
+}
+
 export function addProject(name: string, color: string, client?: string, description?: string): Project {
   const current = loadProjects(true);
   const newProj: Project = {
@@ -609,12 +939,76 @@ export function listSavedQuarters(): string[] {
         }
       }
     }
+    const goals = loadAllQuarterGoals();
+    for (const q of Object.keys(goals)) {
+      if (q && q.trim()) {
+        quarterSet.add(q.trim());
+      }
+    }
   } catch {
     // Ignore
   }
 
   // Return unique sorted quarters
-  return Array.from(quarterSet).sort((a, b) => b.localeCompare(a));
+  return Array.from(quarterSet).sort(compareQuartersDesc);
+}
+
+/**
+ * Loads all DayRecord entries across all saved quarters.
+ * Enables projects and lifetime analytics to display their full continuous scope,
+ * unbound by quarterly review boundaries.
+ * If activeQuarterName and activeQuarterRecords are provided, uses the live in-memory
+ * records for that quarter so in-progress shifts and immediate edits are seamlessly included.
+ */
+export function loadAllRecordsAcrossQuarters(
+  activeQuarterName?: string,
+  activeQuarterRecords?: DayRecord[]
+): DayRecord[] {
+  const quarters = listSavedQuarters();
+  const dateMap = new Map<string, DayRecord>();
+
+  for (const q of quarters) {
+    let qRecords: DayRecord[];
+    if (activeQuarterName && q === activeQuarterName && activeQuarterRecords && activeQuarterRecords.length >= 0) {
+      qRecords = activeQuarterRecords;
+    } else {
+      qRecords = loadQuarterData(q);
+    }
+
+    for (const r of qRecords) {
+      if (!r || !r.date) continue;
+      if (!dateMap.has(r.date)) {
+        dateMap.set(r.date, {
+          ...r,
+          punches: r.punches ? [...r.punches] : [],
+        });
+      } else {
+        const existing = dateMap.get(r.date)!;
+        const existingPunches = existing.punches || [];
+        const incomingPunches = r.punches || [];
+        const combined = [...existingPunches];
+
+        for (const p of incomingPunches) {
+          const isDup = combined.some(
+            (c) =>
+              c.inTime === p.inTime &&
+              c.outTime === p.outTime &&
+              (c.projectId === p.projectId || c.projectName === p.projectName)
+          );
+          if (!isDup) {
+            combined.push(p);
+          }
+        }
+        existing.punches = combined;
+        if (r.notes && !existing.notes) existing.notes = r.notes;
+        if (r.updatedAt && (!existing.updatedAt || r.updatedAt > existing.updatedAt)) {
+          existing.updatedAt = r.updatedAt;
+        }
+      }
+    }
+  }
+
+  return Array.from(dateMap.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
 
 export function getActiveQuarterName(): string {
@@ -854,7 +1248,19 @@ export async function syncWithServer(
       }
       if (json.data.settings && typeof json.data.settings === 'object') {
         const currentLocal = loadSettings();
-        saveSettings({ ...currentLocal, ...json.data.settings, userEmail: email.trim().toLowerCase() });
+        const mergedQuarterGoals = {
+          ...loadAllQuarterGoals(),
+          ...(currentLocal.quarterGoals || {}),
+          ...(json.data.settings.quarterGoals || {}),
+        };
+        const mergedSettings = {
+          ...currentLocal,
+          ...json.data.settings,
+          userEmail: email.trim().toLowerCase(),
+          quarterGoals: mergedQuarterGoals,
+        };
+        saveSettings(mergedSettings);
+        saveAllQuarterGoals(mergedQuarterGoals);
       }
       localStorage.setItem(STORAGE_KEYS.LAST_SYNC, new Date().toISOString());
       return { success: true, data: json.data };
@@ -930,7 +1336,19 @@ export async function pullFromServer(
       }
       if (json.data.settings && typeof json.data.settings === 'object') {
         const currentLocal = loadSettings();
-        saveSettings({ ...currentLocal, ...json.data.settings, userEmail: email.trim().toLowerCase() });
+        const mergedQuarterGoals = {
+          ...loadAllQuarterGoals(),
+          ...(currentLocal.quarterGoals || {}),
+          ...(json.data.settings.quarterGoals || {}),
+        };
+        const mergedSettings = {
+          ...currentLocal,
+          ...json.data.settings,
+          userEmail: email.trim().toLowerCase(),
+          quarterGoals: mergedQuarterGoals,
+        };
+        saveSettings(mergedSettings);
+        saveAllQuarterGoals(mergedQuarterGoals);
       }
       localStorage.setItem(STORAGE_KEYS.LAST_SYNC, new Date().toISOString());
       return { success: true, data: json.data };
@@ -998,6 +1416,9 @@ export function importAllDataJSON(jsonStr: string): boolean {
     }
     if (parsed.settings) {
       saveSettings(parsed.settings);
+      if (parsed.settings.quarterGoals) {
+        saveAllQuarterGoals(parsed.settings.quarterGoals);
+      }
     }
     if (parsed.projects && Array.isArray(parsed.projects)) {
       saveProjects(parsed.projects);
@@ -1323,8 +1744,82 @@ export function clearSampleData(quarterName?: string): void {
   }
 }
 
+export function markAccountEstablished(): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(STORAGE_KEYS.ACCOUNT_ESTABLISHED, 'true');
+  } catch {
+    // Ignore
+  }
+}
+
+export function isAccountEstablished(): boolean {
+  try {
+    if (typeof localStorage === 'undefined') return false;
+
+    // 1. Explicit persistent flag that account has been used in previous/active quarters
+    if (localStorage.getItem(STORAGE_KEYS.ACCOUNT_ESTABLISHED) === 'true') {
+      return true;
+    }
+    if (localStorage.getItem('stt_account_established') === 'true') {
+      markAccountEstablished();
+      return true;
+    }
+
+    // 2. User has logged in or configured an email
+    const email = loadUserEmail();
+    if (email && email.includes('@')) {
+      markAccountEstablished();
+      return true;
+    }
+
+    // 3. User has created custom non-sample projects
+    const projs = loadProjects(true);
+    if (projs.some((p) => p && !p.id.startsWith('proj-sample-') && !p.name?.toLowerCase().includes('(sample)'))) {
+      markAccountEstablished();
+      return true;
+    }
+
+    // 4. User has recorded goals in ANY quarter
+    const goals = loadAllQuarterGoals();
+    if (Object.values(goals).some((g) => hasConfiguredGoal(g))) {
+      markAccountEstablished();
+      return true;
+    }
+
+    // 5. User has recorded punches across ANY saved quarter
+    const allQuarters = listSavedQuarters();
+    for (const q of allQuarters) {
+      const qRecords = loadQuarterData(q);
+      for (const r of qRecords) {
+        if (r.punches && r.punches.length > 0) {
+          for (const p of r.punches) {
+            if (
+              (p.inTime || p.outTime) &&
+              !p.projectName?.includes('(sample)') &&
+              !p.note?.includes('(sample)') &&
+              !p.projectId?.startsWith('proj-sample-')
+            ) {
+              markAccountEstablished();
+              return true;
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    // Ignore
+  }
+  return false;
+}
+
 export function hasUserMadeRealPunches(records?: DayRecord[]): boolean {
   try {
+    // If account has been established in previous quarters, custom projects, or goals:
+    if (isAccountEstablished()) {
+      return true;
+    }
+
     const dayRecords = records || loadQuarterData(getActiveQuarterName());
     for (const r of dayRecords) {
       if (r.punches && r.punches.length > 0) {
@@ -1335,6 +1830,7 @@ export function hasUserMadeRealPunches(records?: DayRecord[]): boolean {
             !p.note?.includes('(sample)') &&
             !p.projectId?.startsWith('proj-sample-')
           ) {
+            markAccountEstablished();
             return true;
           }
         }

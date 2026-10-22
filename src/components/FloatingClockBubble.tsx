@@ -43,6 +43,7 @@ interface FloatingClockBubbleProps {
   onTogglePosition?: () => void;
   onNavigateToClockTab?: () => void;
   liveElapsedSeconds?: number;
+  onUpdateTodaySessions?: (updatedPunches: PunchPair[]) => void;
 }
 
 export function FloatingClockBubble({
@@ -51,6 +52,7 @@ export function FloatingClockBubble({
   selectedProjectId,
   onSelectProject,
   onPunch,
+  onUpdateTodaySessions,
   isPunchedIn,
   activeInTime,
   activeInDate,
@@ -74,8 +76,13 @@ export function FloatingClockBubble({
 
   // Sync project selection
   useEffect(() => {
-    if (selectedProjectId) {
-      setLocalSelectedProj(selectedProjectId);
+    if (selectedProjectId !== undefined) {
+      if (selectedProjectId === '' || projects.some((p) => p.id === selectedProjectId && !p.archived)) {
+        setLocalSelectedProj(selectedProjectId);
+      } else {
+        const fallback = projects.find((p) => !p.archived)?.id || '';
+        setLocalSelectedProj(fallback);
+      }
     } else if (!localSelectedProj && projects[0]?.id) {
       setLocalSelectedProj(projects[0].id);
     }
@@ -295,7 +302,7 @@ export function FloatingClockBubble({
                         <span>Elapsed Time</span>
                         {isMultiDay && (
                           <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.2 rounded">
-                            🌙 Multi-Day Active
+                            Multi-Day Active
                           </span>
                         )}
                       </div>
@@ -343,8 +350,29 @@ export function FloatingClockBubble({
                     <select
                       value={localSelectedProj}
                       onChange={(e) => {
-                        setLocalSelectedProj(e.target.value);
-                        onSelectProject?.(e.target.value);
+                        const newProjId = e.target.value;
+                        setLocalSelectedProj(newProjId);
+                        onSelectProject?.(newProjId);
+
+                        // If user is actively clocked in, retroactively reassign active open session's project immediately
+                        if (isPunchedIn) {
+                          const rawPunches = todayRecord?.punches ? [...todayRecord.punches] : [];
+                          const activeIdx = rawPunches.findIndex((p) => p.inTime && !p.outTime);
+                          if (activeIdx >= 0) {
+                            const targetProj = projects.find((p) => p.id === newProjId);
+                            const updated = rawPunches.map((p, idx) => {
+                              if (idx === activeIdx) {
+                                return {
+                                  ...p,
+                                  projectId: targetProj ? targetProj.id : undefined,
+                                  projectName: targetProj ? targetProj.name : undefined,
+                                };
+                              }
+                              return p;
+                            });
+                            onUpdateTodaySessions?.(updated);
+                          }
+                        }
                       }}
                       className={`w-full bg-slate-50 border border-slate-200 rounded-xl ${
                         currentActiveProj ? 'pl-8' : 'pl-3'

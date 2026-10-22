@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, ChangeEvent } from 'react';
 import confetti from 'canvas-confetti';
 import { 
   Header 
@@ -42,7 +42,7 @@ import {
 import {
   FloatingClockBubble
 } from './components/FloatingClockBubble';
-import { APP_VERSION, formatPublicationTime } from './version';
+import { APP_VERSION, formatPublicationTime, isNewerVersion } from './version';
 
 import { 
   DayRecord, 
@@ -55,6 +55,8 @@ import {
 } from './types';
 import {
   getQuarterName,
+  getPreviousQuarterName,
+  getTodayMondayDate,
   formatDateToYYYYMMDD,
   formatDateMMDDYYYY,
   formatTime24to12,
@@ -71,12 +73,17 @@ import {
   deleteSessionFromRecords,
   generateSessionId,
   normalizeTimeToHHMMSS,
+  parseQuarterFromFileName,
+  parseCSVToRecordsAndProjects,
+  getQuarterNameFromDateStr,
+  compareQuartersDesc,
 } from './utils/timeCalculations';
 import {
   loadSettings,
   saveSettings,
   loadQuarterData,
   saveQuarterData,
+  loadAllRecordsAcrossQuarters,
   listSavedQuarters,
   loadProjects,
   saveProjects,
@@ -95,22 +102,60 @@ import {
   recordDeletedDate,
   logoutAuth,
   validateCurrentSession,
+  loadLastSelectedProjectId,
+  saveLastSelectedProjectId,
+  getInitialSelectedProjectId,
+  getActiveQuarterName,
+  setActiveQuarterName,
+  getQuarterGoal,
+  setQuarterGoal,
+  ensureQuarterGoalsPopulated,
+  isAccountEstablished,
+  markAccountEstablished,
 } from './utils/storage';
 import {
   playPunchInSound,
   playPunchOutSound,
   playSuccessChime,
 } from './utils/audio';
-import { Sparkles, RotateCcw, FlaskConical, AlertTriangle, MessageSquarePlus, RefreshCw, X } from 'lucide-react';
+import { Sparkles, RotateCcw, FlaskConical, AlertTriangle, MessageSquarePlus, RefreshCw, X, Upload, Calendar } from 'lucide-react';
 import { ConfirmModal, ConfirmDialogOptions } from './components/ConfirmModal';
 
 export default function App() {
-  const [activeQuarter, setActiveQuarter] = useState<string>(() => getQuarterName());
+  const [activeQuarter, setActiveQuarter] = useState<string>(() => getActiveQuarterName());
   const [availableQuarters, setAvailableQuarters] = useState<string[]>(() => listSavedQuarters());
-  const [records, setRecords] = useState<DayRecord[]>(() => loadQuarterData(getQuarterName()));
-  const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
+  const [records, setRecords] = useState<DayRecord[]>(() => loadQuarterData(getActiveQuarterName()));
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    const loaded = loadSettings();
+    const currentQ = getActiveQuarterName();
+    const { settings: populatedSettings } = ensureQuarterGoalsPopulated(currentQ, loaded);
+    return populatedSettings;
+  });
   const [projects, setProjects] = useState<Project[]>(() => loadProjects());
-  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
+  const [selectedProjectId, setSelectedProjectId] = useState<string>(() => {
+    const saved = loadLastSelectedProjectId();
+    const initialRecords = loadQuarterData(getQuarterName());
+    const initialProjects = loadProjects();
+    return getInitialSelectedProjectId(saved, initialRecords, initialProjects);
+  });
+
+  const handleSelectProject = useCallback((projId: string) => {
+    setSelectedProjectId(projId);
+    saveLastSelectedProjectId(projId);
+  }, []);
+
+  const handleQuarterChange = useCallback((newQuarter: string) => {
+    setActiveQuarter(newQuarter);
+    setActiveQuarterName(newQuarter);
+    const loadedRecords = loadQuarterData(newQuarter);
+    setRecords(loadedRecords || []);
+
+    // Ensure the selected quarter has its goals populated from the previous quarter
+    setSettings((prevSettings) => {
+      const { settings: updatedSettings } = ensureQuarterGoalsPopulated(newQuarter, prevSettings);
+      return updatedSettings;
+    });
+  }, []);
   const [isUpdateAvailable, setIsUpdateAvailable] = useState<boolean>(false);
   const [newPublicationVersion, setNewPublicationVersion] = useState<string | null>(null);
   const [liveElapsedSeconds, setLiveElapsedSeconds] = useState<number>(0);
@@ -163,7 +208,9 @@ export default function App() {
     setRecords(loaded || []);
     setAvailableQuarters(listSavedQuarters());
     setProjects(loadProjects());
-    setSettings(loadSettings());
+    const rawSettings = loadSettings();
+    const { settings: populatedSettings } = ensureQuarterGoalsPopulated(activeQuarter, rawSettings);
+    setSettings(populatedSettings);
   }, [activeQuarter]);
 
   // Apply text size scaling dynamically across the entire document
@@ -343,8 +390,8 @@ export default function App() {
         const data = await res.json();
         if (!data || !isSubscribed) return;
 
-        // Check if server version differs from currently running bundle's APP_VERSION
-        const isClientBundleOutdated = Boolean(data.version && data.version !== APP_VERSION);
+        // An update is available ONLY if the remote version is strictly newer than current client bundle
+        const hasNewerVersion = Boolean(data.version && isNewerVersion(data.version, APP_VERSION));
 
         if (!initialPublicationRef.current) {
           initialPublicationRef.current = {
@@ -352,23 +399,15 @@ export default function App() {
             buildId: data.buildId || '',
             publishedAt: data.publishedAt || '',
           };
+        }
 
-          if (isClientBundleOutdated) {
-            setIsUpdateAvailable(true);
-            setNewPublicationVersion(data.version || APP_VERSION);
-          }
+        if (hasNewerVersion) {
+          setIsUpdateAvailable(true);
+          setNewPublicationVersion(data.version);
         } else {
-          // Compare server build with loaded build
-          const isNewBuild =
-            isClientBundleOutdated ||
-            (data.buildId && data.buildId !== initialPublicationRef.current.buildId) ||
-            (data.publishedAt && data.publishedAt !== initialPublicationRef.current.publishedAt) ||
-            (data.version && data.version !== initialPublicationRef.current.version);
-
-          if (isNewBuild) {
-            setIsUpdateAvailable(true);
-            setNewPublicationVersion(data.version || APP_VERSION);
-          }
+          // Keep update banner hidden when running the latest version
+          setIsUpdateAvailable(false);
+          setNewPublicationVersion(null);
         }
       } catch {
         // Offline or server unreachable
@@ -389,13 +428,15 @@ export default function App() {
     document.addEventListener('visibilitychange', handleFocusOrVisible);
     window.addEventListener('online', handleFocusOrVisible);
 
-    // Poll every 20 seconds while open
-    const interval = setInterval(checkPublishedVersion, 20000);
+    // Poll every 30 seconds while open
+    const interval = setInterval(checkPublishedVersion, 30000);
 
-    // Listen to service worker controller change
+    // Listen to service worker controller change: verify whether a newer version is actually live
     if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
       navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (isSubscribed) setIsUpdateAvailable(true);
+        if (isSubscribed) {
+          checkPublishedVersion();
+        }
       });
     }
 
@@ -408,19 +449,30 @@ export default function App() {
     };
   }, []);
 
+  // Current real-world quarter
+  const currentQuarter = useMemo(() => getQuarterName(), []);
+
+  // Records for current open quarter (even when reviewing previous closed quarters)
+  const currentQuarterRecords = useMemo(() => {
+    if (activeQuarter === currentQuarter) return records;
+    return loadQuarterData(currentQuarter);
+  }, [activeQuarter, currentQuarter, records]);
+
   // Today string
   const todayStr = useMemo(() => formatDateToYYYYMMDD(new Date()), []);
 
-  // Today record
+  // Today record - ALWAYS sourced from the current quarter's records
   const todayRecord = useMemo(() => {
-    return records.find((r) => r.date === todayStr);
-  }, [records, todayStr]);
+    return currentQuarterRecords.find((r) => r.date === todayStr);
+  }, [currentQuarterRecords, todayStr]);
 
   // Determine current Punch State (IN vs OUT) dynamically across any number of punch pairs
-  // Seamlessly supports overnight shifts and multi-day sessions (e.g. clocked in on Sep 1 at 23:45, continuing into Sep 3)
+  // Seamlessly supports overnight shifts and multi-day sessions
+  // ALWAYS evaluated against currentQuarterRecords so active clock-in, running timer, and buttons
+  // accurately reflect current live work state even when reviewing previous closed quarters
   const punchState = useMemo(() => {
-    // 1. Search through ALL records (newest date first) for an open session (inTime without outTime)
-    const sortedRecordsDesc = [...records].sort((a, b) => b.date.localeCompare(a.date));
+    // 1. Search through ALL current quarter records (newest date first) for an open session (inTime without outTime)
+    const sortedRecordsDesc = [...currentQuarterRecords].sort((a, b) => b.date.localeCompare(a.date));
     
     let activeOpenPunch: PunchPair | null = null;
     let activeRecordDate: string | null = null;
@@ -483,7 +535,7 @@ export default function App() {
       activeSlotIndex: -1,
       isMultiDay: false,
     };
-  }, [records, todayStr]);
+  }, [currentQuarterRecords, todayStr]);
 
   // Live timer tick for active session (supports cross-midnight and multi-day sessions)
   useEffect(() => {
@@ -502,18 +554,51 @@ export default function App() {
     return () => clearInterval(interval);
   }, [punchState.isPunchedIn, punchState.activeInTime, punchState.activeInDate]);
 
+  // Keep selected project aligned with active session if one is running
+  useEffect(() => {
+    if (punchState.isPunchedIn && punchState.activeProjectId !== undefined) {
+      if (selectedProjectId !== punchState.activeProjectId) {
+        handleSelectProject(punchState.activeProjectId);
+      }
+    }
+  }, [punchState.isPunchedIn, punchState.activeProjectId, selectedProjectId, handleSelectProject]);
+
+  // Load previous quarter records when the current 2-week comparison window crosses quarter boundaries
+  const previousQuarterRecords = useMemo(() => {
+    const thisMon = getTodayMondayDate(new Date());
+    const lastMon = new Date(thisMon);
+    lastMon.setDate(thisMon.getDate() - 7);
+
+    const prevWeekQuarter = getQuarterName(lastMon);
+    const thisWeekQuarter = getQuarterName(thisMon);
+
+    const neededQ = prevWeekQuarter !== activeQuarter
+      ? prevWeekQuarter
+      : (thisWeekQuarter !== activeQuarter ? thisWeekQuarter : getPreviousQuarterName(activeQuarter));
+
+    if (neededQ && neededQ !== activeQuarter) {
+      return loadQuarterData(neededQ);
+    }
+    return [];
+  }, [activeQuarter, records]);
+
   // Dashboard Metrics & Charts calculation
   const metrics: DashboardMetrics = useMemo(() => {
-    return calculateMetrics(records, todayStr);
-  }, [records, todayStr]);
+    return calculateMetrics(records, todayStr, projects, previousQuarterRecords);
+  }, [records, todayStr, projects, previousQuarterRecords]);
 
   const weeklyChartData: WeeklyChartData = useMemo(() => {
-    return getWeeklyChartData(records, new Date(), projects);
-  }, [records, projects]);
+    return getWeeklyChartData(records, new Date(), projects, previousQuarterRecords);
+  }, [records, projects, previousQuarterRecords]);
 
   const quarterWeeks = useMemo(() => {
-    return getQuarterWeeksBreakdown(records, activeQuarter, liveElapsedSeconds);
-  }, [records, activeQuarter, liveElapsedSeconds]);
+    return getQuarterWeeksBreakdown(records, activeQuarter, liveElapsedSeconds, new Date(), previousQuarterRecords);
+  }, [records, activeQuarter, liveElapsedSeconds, previousQuarterRecords]);
+
+  // Continuous records across all quarters for project tracking
+  const allQuartersRecords = useMemo(() => {
+    return loadAllRecordsAcrossQuarters(activeQuarter, records);
+  }, [activeQuarter, records, isProjectsModalOpen]);
 
   // Handle Clock In / Clock Out supporting multi-day journeys, overnight shifts, indefinite sessions, projects, and notes
   const handlePunch = (
@@ -527,7 +612,14 @@ export default function App() {
     const targetDate = customDateStr || formatDateToYYYYMMDD(now);
     const targetTime = customTimeStr || formatTimeToHHMMSS(now);
 
-    const updatedRecords = [...records];
+    // CRITICAL: Cannot add punches to closed quarters!
+    // Punches must always be recorded in the current active quarter.
+    const targetQuarter = currentQuarter;
+    const isSwitchingFromClosed = activeQuarter !== targetQuarter;
+
+    // Load records from target (current) quarter so closed quarters are never modified
+    const baseRecords = activeQuarter === targetQuarter ? records : loadQuarterData(targetQuarter);
+    const updatedRecords = [...baseRecords];
     const activeProj = projects.find((p) => p.id === (projectId || selectedProjectId));
 
     if (type === 'IN') {
@@ -594,13 +686,25 @@ export default function App() {
         updatedRecords[recIdx] = currentRecord;
       }
 
-      saveQuarterData(activeQuarter, updatedRecords);
+      saveQuarterData(targetQuarter, updatedRecords);
+      if (isSwitchingFromClosed) {
+        setActiveQuarter(targetQuarter);
+        setActiveQuarterName(targetQuarter);
+      }
       setRecords(updatedRecords);
       triggerAutoSync();
+      markAccountEstablished();
+
+      if (activeProj) {
+        handleSelectProject(activeProj.id);
+      } else if (projectId === '') {
+        handleSelectProject('');
+      }
 
       if (settings.soundEnabled) playPunchInSound();
+      const switchNotice = isSwitchingFromClosed ? ` (Switched from ${activeQuarter} to current quarter ${targetQuarter})` : '';
       setStatusMessage({
-        text: `Clocked IN at ${formatTime24to12(targetTime)} for ${formatDateMMDDYYYY(targetDate)}${activeProj ? ` • ${activeProj.name}` : ''}`,
+        text: `Clocked IN at ${formatTime24to12(targetTime)} for ${formatDateMMDDYYYY(targetDate)}${activeProj ? ` • ${activeProj.name}` : ''}${switchNotice}`,
         isError: false,
       });
     } else {
@@ -654,9 +758,17 @@ export default function App() {
         openRec.punches[openPunchIdx] = activePunch;
         updatedRecords[openRecIdx] = openRec;
 
-        saveQuarterData(activeQuarter, updatedRecords);
+        saveQuarterData(targetQuarter, updatedRecords);
+        if (isSwitchingFromClosed) {
+          setActiveQuarter(targetQuarter);
+          setActiveQuarterName(targetQuarter);
+        }
         setRecords(updatedRecords);
         triggerAutoSync();
+
+        if (activeProjId !== undefined) {
+          handleSelectProject(activeProjId);
+        }
 
         if (settings.soundEnabled) playPunchOutSound();
         try {
@@ -670,8 +782,9 @@ export default function App() {
           // Ignore
         }
 
+        const switchNotice = isSwitchingFromClosed ? ` (Switched from ${activeQuarter} to current quarter ${targetQuarter})` : '';
         setStatusMessage({
-          text: `Clocked OUT at ${formatTime24to12(endTime)} for ${formatDateMMDDYYYY(startDate)} (Session #${openPunchIdx + 1}: ${formatSecondsToHuman(durSec)})`,
+          text: `Clocked OUT at ${formatTime24to12(endTime)} for ${formatDateMMDDYYYY(startDate)} (Session #${openPunchIdx + 1}: ${formatSecondsToHuman(durSec)})${switchNotice}`,
           isError: false,
         });
       } else {
@@ -723,9 +836,17 @@ export default function App() {
         // Keep records chronologically sorted
         updatedRecords.sort((a, b) => a.date.localeCompare(b.date));
 
-        saveQuarterData(activeQuarter, updatedRecords);
+        saveQuarterData(targetQuarter, updatedRecords);
+        if (isSwitchingFromClosed) {
+          setActiveQuarter(targetQuarter);
+          setActiveQuarterName(targetQuarter);
+        }
         setRecords(updatedRecords);
         triggerAutoSync();
+
+        if (activeProjId !== undefined) {
+          handleSelectProject(activeProjId);
+        }
 
         if (settings.soundEnabled) playPunchOutSound();
         try {
@@ -739,8 +860,9 @@ export default function App() {
           // Ignore
         }
 
+        const switchNotice = isSwitchingFromClosed ? ` (Switched from ${activeQuarter} to current quarter ${targetQuarter})` : '';
         setStatusMessage({
-          text: `Clocked OUT at ${formatTime24to12(endTime)}! Multi-day session (${formatSecondsToHuman(totalSessionSec)}) spanning ${formatDateMMDDYYYY(startDate)} to ${formatDateMMDDYYYY(endDate)} recorded.`,
+          text: `Clocked OUT at ${formatTime24to12(endTime)}! Multi-day session (${formatSecondsToHuman(totalSessionSec)}) spanning ${formatDateMMDDYYYY(startDate)} to ${formatDateMMDDYYYY(endDate)} recorded.${switchNotice}`,
           isError: false,
         });
       }
@@ -789,6 +911,153 @@ export default function App() {
     document.body.removeChild(a);
   };
 
+  const handleImportCSVData = useCallback((
+    parsedRecords: DayRecord[],
+    parsedProjects: Project[] = [],
+    fileNameOrQuarter?: string
+  ) => {
+    if (parsedRecords.length === 0 && parsedProjects.length === 0) {
+      setStatusMessage({ text: 'Could not detect any records or projects in CSV.', isError: true });
+      return;
+    }
+
+    // 1. Merge any parsed projects
+    let newProjectCount = 0;
+    if (parsedProjects.length > 0) {
+      const existingProjects = loadProjects(true);
+      const existingMap = new Map<string, Project>();
+      existingProjects.forEach(p => existingMap.set(p.name.toLowerCase().trim(), p));
+
+      const mergedProjects = [...existingProjects];
+      for (const np of parsedProjects) {
+        const key = np.name.toLowerCase().trim();
+        if (!existingMap.has(key)) {
+          mergedProjects.push(np);
+          existingMap.set(key, np);
+          newProjectCount++;
+        }
+      }
+      if (newProjectCount > 0) {
+        setProjects(mergedProjects);
+        saveProjects(mergedProjects);
+      }
+    }
+
+    // 2. Detect quarter from filename or metadata comment
+    const fileNameQuarter = parseQuarterFromFileName(fileNameOrQuarter);
+    const metaQuarter = fileNameOrQuarter && /^Q[1-4]\s+\d{4}$/i.test(fileNameOrQuarter.trim())
+      ? fileNameOrQuarter.trim()
+      : null;
+
+    // 3. Group parsed records by their respective quarter
+    const recordsByQuarter = new Map<string, DayRecord[]>();
+
+    for (const rec of parsedRecords) {
+      const qName = getQuarterNameFromDateStr(rec.date) || metaQuarter || fileNameQuarter || activeQuarter;
+      if (!recordsByQuarter.has(qName)) {
+        recordsByQuarter.set(qName, []);
+      }
+      recordsByQuarter.get(qName)!.push(rec);
+    }
+
+    // If no date records exist but a quarter was detected in the file name or metadata
+    if (recordsByQuarter.size === 0 && (metaQuarter || fileNameQuarter)) {
+      const explicitQ = metaQuarter || fileNameQuarter!;
+      recordsByQuarter.set(explicitQ, []);
+    }
+
+    // 4. Save records into each respective quarter's storage & ensure quarter tabs exist
+    const modifiedQuarters: string[] = [];
+    let totalRecordsImported = 0;
+    const nowIso = new Date().toISOString();
+
+    for (const [qName, incomingRecords] of recordsByQuarter.entries()) {
+      modifiedQuarters.push(qName);
+      totalRecordsImported += incomingRecords.length;
+
+      const existingRecords = loadQuarterData(qName);
+      const dateMap = new Map<string, DayRecord>();
+      existingRecords.forEach(r => dateMap.set(r.date, r));
+
+      for (const inc of incomingRecords) {
+        const existing = dateMap.get(inc.date);
+        if (!existing) {
+          dateMap.set(inc.date, {
+            ...inc,
+            updatedAt: inc.updatedAt || nowIso,
+          });
+        } else {
+          const incomingPunches = (inc.punches || []).filter(p => p.inTime || p.outTime);
+          if (incomingPunches.length > 0) {
+            dateMap.set(inc.date, {
+              ...existing,
+              ...inc,
+              notes: inc.notes || existing.notes,
+              punches: inc.punches,
+              updatedAt: nowIso,
+            });
+          }
+        }
+      }
+
+      const mergedDays = Array.from(dateMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+      saveQuarterData(qName, mergedDays);
+
+      // Ensure quarter goals are auto-populated for this quarter
+      const currentSettings = loadSettings();
+      ensureQuarterGoalsPopulated(qName, currentSettings);
+    }
+
+    // Mark account established so sample banner is permanently prevented
+    markAccountEstablished();
+
+    // 5. Update availableQuarters list to reflect newly created quarter tabs
+    const allQuarters = listSavedQuarters();
+    setAvailableQuarters(allQuarters);
+
+    // 6. Select the newly imported quarter tab
+    // If a previous quarter was imported, activate it so the user immediately sees it
+    const targetQuarter = modifiedQuarters.find(q => q !== activeQuarter) || modifiedQuarters[0] || activeQuarter;
+
+    if (targetQuarter) {
+      handleQuarterChange(targetQuarter);
+    } else {
+      reloadQuarterData();
+    }
+
+    if (settings.soundEnabled) playSuccessChime();
+    triggerAutoSync();
+
+    const projMsg = newProjectCount > 0 ? ` and ${newProjectCount} new projects` : '';
+    const quartersListStr = modifiedQuarters.join(', ');
+    setStatusMessage({
+      text: `Successfully imported ${totalRecordsImported} entries${projMsg} across [${quartersListStr}]. Created and activated '${targetQuarter}' tab!`,
+      isError: false,
+    });
+  }, [activeQuarter, handleQuarterChange, reloadQuarterData, settings.soundEnabled]);
+
+  const handleImportCSVFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result as string;
+        const { records: parsedRecords, projects: parsedProjects, detectedQuarter } = parseCSVToRecordsAndProjects(text, projects);
+        if (parsedRecords.length === 0 && parsedProjects.length === 0) {
+          setStatusMessage({ text: 'Could not parse records or projects from CSV.', isError: true });
+          return;
+        }
+        handleImportCSVData(parsedRecords, parsedProjects, detectedQuarter || file.name);
+      } catch (err) {
+        setStatusMessage({ text: 'Error importing CSV: ' + String(err), isError: true });
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   const handleSaveTimesheetRecords = (updated: DayRecord[]) => {
     const nowIso = new Date().toISOString();
     const stamped = updated.map((r) => ({ ...r, updatedAt: r.updatedAt || nowIso }));
@@ -799,66 +1068,121 @@ export default function App() {
   };
 
   const handleSaveDayRecord = (record: DayRecord) => {
+    const targetQuarter = getQuarterNameFromDateStr(record.date);
     const nowIso = new Date().toISOString();
     const stamped = { ...record, updatedAt: nowIso };
-    setRecords((prev) => {
-      const updated = [...prev];
+
+    if (targetQuarter === activeQuarter) {
+      setRecords((prev) => {
+        const updated = [...prev];
+        const idx = updated.findIndex((r) => r.date === record.date);
+        if (idx >= 0) {
+          updated[idx] = stamped;
+        } else {
+          updated.push(stamped);
+        }
+        saveQuarterData(targetQuarter, updated);
+        triggerAutoSync();
+        return updated;
+      });
+    } else {
+      // Save directly to the target past quarter's storage
+      const existing = loadQuarterData(targetQuarter);
+      const updated = [...existing];
       const idx = updated.findIndex((r) => r.date === record.date);
       if (idx >= 0) {
         updated[idx] = stamped;
       } else {
         updated.push(stamped);
       }
-      saveQuarterData(activeQuarter, updated);
+      saveQuarterData(targetQuarter, updated);
+      setAvailableQuarters((prev) => {
+        if (!prev.includes(targetQuarter)) {
+          return [...prev, targetQuarter].sort(compareQuartersDesc);
+        }
+        return prev;
+      });
       triggerAutoSync();
-      return updated;
-    });
+    }
     if (settings.soundEnabled) playSuccessChime();
   };
 
   const handleSaveMultipleRecords = (recordsToSave: DayRecord[]) => {
     const nowIso = new Date().toISOString();
-    setRecords((prev) => {
-      const updated = [...prev];
-      for (const rec of recordsToSave) {
-        const stamped = { ...rec, updatedAt: nowIso };
-        const idx = updated.findIndex((r) => r.date === rec.date);
-        if (idx >= 0) {
-          updated[idx] = stamped;
-        } else {
-          updated.push(stamped);
+    // Group records by their respective target quarter
+    const grouped = new Map<string, DayRecord[]>();
+    for (const rec of recordsToSave) {
+      const q = getQuarterNameFromDateStr(rec.date);
+      if (!grouped.has(q)) grouped.set(q, []);
+      grouped.get(q)!.push({ ...rec, updatedAt: nowIso });
+    }
+
+    for (const [q, recs] of grouped.entries()) {
+      if (q === activeQuarter) {
+        setRecords((prev) => {
+          const updated = [...prev];
+          for (const stamped of recs) {
+            const idx = updated.findIndex((r) => r.date === stamped.date);
+            if (idx >= 0) updated[idx] = stamped;
+            else updated.push(stamped);
+          }
+          updated.sort((a, b) => a.date.localeCompare(b.date));
+          saveQuarterData(q, updated);
+          return updated;
+        });
+      } else {
+        const existing = loadQuarterData(q);
+        const updated = [...existing];
+        for (const stamped of recs) {
+          const idx = updated.findIndex((r) => r.date === stamped.date);
+          if (idx >= 0) updated[idx] = stamped;
+          else updated.push(stamped);
         }
+        updated.sort((a, b) => a.date.localeCompare(b.date));
+        saveQuarterData(q, updated);
+        setAvailableQuarters((prev) => {
+          if (!prev.includes(q)) return [...prev, q].sort(compareQuartersDesc);
+          return prev;
+        });
       }
-      updated.sort((a, b) => a.date.localeCompare(b.date));
-      saveQuarterData(activeQuarter, updated);
-      triggerAutoSync();
-      return updated;
-    });
+    }
+    triggerAutoSync();
     if (settings.soundEnabled) playSuccessChime();
   };
 
   const handleUpdateTodaySessions = (updatedPunches: PunchPair[]) => {
+    const targetQuarter = currentQuarter;
+    const isSwitchingFromClosed = activeQuarter !== targetQuarter;
     const nowIso = new Date().toISOString();
-    setRecords((prev) => {
-      const updated = [...prev];
-      const idx = updated.findIndex((r) => r.date === todayStr);
-      if (idx >= 0) {
-        updated[idx] = {
-          ...updated[idx],
-          punches: updatedPunches,
-          updatedAt: nowIso,
-        };
-      } else {
-        updated.push({
-          date: todayStr,
-          punches: updatedPunches,
-          updatedAt: nowIso,
-        });
-      }
-      saveQuarterData(activeQuarter, updated);
-      triggerAutoSync();
-      return updated;
-    });
+    const baseRecords = activeQuarter === targetQuarter ? records : loadQuarterData(targetQuarter);
+    const updated = [...baseRecords];
+    const idx = updated.findIndex((r) => r.date === todayStr);
+    if (idx >= 0) {
+      updated[idx] = {
+        ...updated[idx],
+        punches: updatedPunches,
+        updatedAt: nowIso,
+      };
+    } else {
+      updated.push({
+        date: todayStr,
+        punches: updatedPunches,
+        updatedAt: nowIso,
+      });
+    }
+    saveQuarterData(targetQuarter, updated);
+    if (isSwitchingFromClosed) {
+      setActiveQuarter(targetQuarter);
+      setActiveQuarterName(targetQuarter);
+    }
+    setRecords(updated);
+    triggerAutoSync();
+
+    const activePunch = updatedPunches.find((p) => p.inTime && !p.outTime);
+    if (activePunch && activePunch.projectId !== undefined) {
+      handleSelectProject(activePunch.projectId);
+    }
+
     if (settings.soundEnabled) playSuccessChime();
   };
 
@@ -884,41 +1208,175 @@ export default function App() {
 
   // Cancel / discard an in-progress active Clock In session
   const handleDiscardActiveSession = useCallback(() => {
+    const targetQuarter = currentQuarter;
+    const isSwitchingFromClosed = activeQuarter !== targetQuarter;
     const nowIso = new Date().toISOString();
-    setRecords((prev) => {
-      const updated = [...prev];
-      let found = false;
-      for (let r = updated.length - 1; r >= 0; r--) {
-        const rec = updated[r];
-        if (rec.punches && Array.isArray(rec.punches)) {
-          const target = rec.punches.find((p) => p.inTime && (!p.outTime || p.outTime.trim() === ''));
-          if (target) {
-            recordDeletedSession(target, rec.date);
-          }
-          const remaining = rec.punches.filter((p) => !(p.inTime && (!p.outTime || p.outTime.trim() === '')));
-          if (remaining.length !== rec.punches.length) {
-            updated[r] = { ...rec, punches: remaining, updatedAt: nowIso };
-            found = true;
-            break;
-          }
+    const baseRecords = activeQuarter === targetQuarter ? records : loadQuarterData(targetQuarter);
+    const updated = [...baseRecords];
+    let found = false;
+    for (let r = updated.length - 1; r >= 0; r--) {
+      const rec = updated[r];
+      if (rec.punches && Array.isArray(rec.punches)) {
+        const target = rec.punches.find((p) => p.inTime && (!p.outTime || p.outTime.trim() === ''));
+        if (target) {
+          recordDeletedSession(target, rec.date);
+        }
+        const remaining = rec.punches.filter((p) => !(p.inTime && (!p.outTime || p.outTime.trim() === '')));
+        if (remaining.length !== rec.punches.length) {
+          updated[r] = { ...rec, punches: remaining, updatedAt: nowIso };
+          found = true;
+          break;
         }
       }
-      if (found) {
-        saveQuarterData(activeQuarter, updated);
-        triggerAutoSync();
-        if (settings.soundEnabled) playPunchOutSound();
-        setStatusMessage({
-          text: 'Active session discarded and deleted.',
-          isError: false,
+    }
+    if (found) {
+      saveQuarterData(targetQuarter, updated);
+      if (isSwitchingFromClosed) {
+        setActiveQuarter(targetQuarter);
+        setActiveQuarterName(targetQuarter);
+      }
+      setRecords(updated);
+      triggerAutoSync();
+      if (settings.soundEnabled) playPunchOutSound();
+      setStatusMessage({
+        text: 'Active session discarded and deleted.',
+        isError: false,
+      });
+    }
+  }, [activeQuarter, currentQuarter, records, settings.soundEnabled, triggerAutoSync]);
+
+  // Save edited project punch across any quarter without boundary restrictions
+  const handleSaveProjectPunchEdit = ({
+    oldDate,
+    newDate,
+    punchIndex,
+    updatedPunch,
+  }: {
+    oldDate: string;
+    newDate: string;
+    punchIndex: number;
+    updatedPunch: PunchPair;
+  }) => {
+    const oldQuarter = getQuarterNameFromDateStr(oldDate);
+    const newQuarter = getQuarterNameFromDateStr(newDate);
+    const nowIso = new Date().toISOString();
+
+    if (oldQuarter === newQuarter) {
+      // Both dates in the same quarter
+      const isTargetActive = oldQuarter === activeQuarter;
+      const baseRecs = isTargetActive ? [...records] : loadQuarterData(oldQuarter);
+      const oldRecIdx = baseRecs.findIndex((r) => r.date === oldDate);
+      if (oldRecIdx >= 0) {
+        if (oldDate === newDate) {
+          const oldRec = { ...baseRecs[oldRecIdx] };
+          const punchesCopy = [...(oldRec.punches || [])];
+          punchesCopy[punchIndex] = updatedPunch;
+          oldRec.punches = punchesCopy;
+          oldRec.updatedAt = nowIso;
+          baseRecs[oldRecIdx] = oldRec;
+        } else {
+          const oldRec = { ...baseRecs[oldRecIdx] };
+          oldRec.punches = (oldRec.punches || []).filter((_, idx) => idx !== punchIndex);
+          oldRec.updatedAt = nowIso;
+          baseRecs[oldRecIdx] = oldRec;
+
+          const newRecIdx = baseRecs.findIndex((r) => r.date === newDate);
+          if (newRecIdx >= 0) {
+            const newRec = { ...baseRecs[newRecIdx] };
+            newRec.punches = [...(newRec.punches || []), updatedPunch];
+            newRec.updatedAt = nowIso;
+            baseRecs[newRecIdx] = newRec;
+          } else {
+            baseRecs.push({
+              date: newDate,
+              punches: [updatedPunch],
+              updatedAt: nowIso,
+            });
+          }
+          baseRecs.sort((a, b) => a.date.localeCompare(b.date));
+        }
+
+        saveQuarterData(oldQuarter, baseRecs);
+        if (isTargetActive) {
+          setRecords(baseRecs);
+        }
+      }
+    } else {
+      // Dates cross different quarters: remove from old quarter, add to new quarter
+      const isOldActive = oldQuarter === activeQuarter;
+      const oldRecs = isOldActive ? [...records] : loadQuarterData(oldQuarter);
+      const oldRecIdx = oldRecs.findIndex((r) => r.date === oldDate);
+      if (oldRecIdx >= 0) {
+        const oldRec = { ...oldRecs[oldRecIdx] };
+        oldRec.punches = (oldRec.punches || []).filter((_, idx) => idx !== punchIndex);
+        oldRec.updatedAt = nowIso;
+        oldRecs[oldRecIdx] = oldRec;
+        saveQuarterData(oldQuarter, oldRecs);
+        if (isOldActive) {
+          setRecords(oldRecs);
+        }
+      }
+
+      const isNewActive = newQuarter === activeQuarter;
+      const newRecs = isNewActive ? [...records] : loadQuarterData(newQuarter);
+      const newRecIdx = newRecs.findIndex((r) => r.date === newDate);
+      if (newRecIdx >= 0) {
+        const newRec = { ...newRecs[newRecIdx] };
+        newRec.punches = [...(newRec.punches || []), updatedPunch];
+        newRec.updatedAt = nowIso;
+        newRecs[newRecIdx] = newRec;
+      } else {
+        newRecs.push({
+          date: newDate,
+          punches: [updatedPunch],
+          updatedAt: nowIso,
         });
       }
-      return updated;
-    });
-  }, [activeQuarter, triggerAutoSync, settings.soundEnabled]);
+      newRecs.sort((a, b) => a.date.localeCompare(b.date));
+      saveQuarterData(newQuarter, newRecs);
+      if (isNewActive) {
+        setRecords(newRecs);
+      }
+      setAvailableQuarters((prev) => {
+        if (!prev.includes(newQuarter)) return [...prev, newQuarter].sort(compareQuartersDesc);
+        return prev;
+      });
+    }
+
+    triggerAutoSync();
+    if (settings.soundEnabled) playSuccessChime();
+  };
+
+  // Delete project punch session across any quarter
+  const handleProjectDeletePunch = (dateStr: string, punch: PunchPair, punchIndex?: number) => {
+    const targetQuarter = getQuarterNameFromDateStr(dateStr);
+    recordDeletedSession(punch, dateStr);
+
+    if (targetQuarter === activeQuarter) {
+      setRecords((prevRecords) => {
+        const updated = deleteSessionFromRecords(prevRecords, dateStr, punch, punchIndex);
+        saveQuarterData(activeQuarter, updated);
+        return updated;
+      });
+    } else {
+      const existing = loadQuarterData(targetQuarter);
+      const updated = deleteSessionFromRecords(existing, dateStr, punch, punchIndex);
+      saveQuarterData(targetQuarter, updated);
+    }
+
+    triggerAutoSync();
+    if (settings.soundEnabled) playSuccessChime();
+  };
 
   const handleSaveSettings = (updated: AppSettings) => {
-    setSettings(updated);
-    saveSettings(updated);
+    const updatedSettings = setQuarterGoal(activeQuarter, {
+      enableGoals: updated.enableGoals,
+      weeklyGoalHours: updated.weeklyGoalHours,
+      dailyGoalHours: updated.dailyGoalHours,
+      isExplicit: true,
+    }, updated);
+    setSettings(updatedSettings);
+    saveSettings(updatedSettings);
     triggerAutoSync();
   };
 
@@ -927,6 +1385,12 @@ export default function App() {
     saveProjects(updatedProjects);
     triggerAutoSync();
     if (settings.soundEnabled) playSuccessChime();
+
+    // If current selected project was deleted or archived, cleanly fall back
+    if (selectedProjectId && !updatedProjects.some((p) => p.id === selectedProjectId && !p.archived && !p.isDeleted)) {
+      const fallback = updatedProjects.find((p) => !p.archived && !p.isDeleted)?.id || '';
+      handleSelectProject(fallback);
+    }
   };
 
   const handleLoginSuccess = async (email: string, token?: string) => {
@@ -1028,13 +1492,7 @@ export default function App() {
           const verData = await verRes.json();
           if (verData?.version) {
             publishedVersion = verData.version;
-          }
-          if (initialPublicationRef.current && verData) {
-            if (
-              (verData.buildId && verData.buildId !== initialPublicationRef.current.buildId) ||
-              (verData.publishedAt && verData.publishedAt !== initialPublicationRef.current.publishedAt) ||
-              (verData.version && verData.version !== initialPublicationRef.current.version)
-            ) {
+            if (isNewerVersion(verData.version, APP_VERSION)) {
               isNewPublicationDetected = true;
             }
           }
@@ -1043,8 +1501,8 @@ export default function App() {
         // Fallback silently if offline
       }
 
-      // If a new publication version is detected OR if update banner is active, apply the update and reload immediately!
-      if (isNewPublicationDetected || isUpdateAvailable) {
+      // If a new publication version is detected, apply the update and reload immediately!
+      if (isNewPublicationDetected) {
         await applyAppUpdateAndReload();
         return;
       }
@@ -1191,7 +1649,7 @@ export default function App() {
           triggerAutoSync();
         }}
         activeQuarter={activeQuarter}
-        onQuarterChange={(q) => setActiveQuarter(q)}
+        onQuarterChange={handleQuarterChange}
         availableQuarters={availableQuarters}
         userEmail={settings.userEmail}
         syncStatus={syncStatus}
@@ -1275,7 +1733,7 @@ export default function App() {
             </div>
           </div>
         </div>
-      ) : !hasRealPunches ? (
+      ) : (!hasRealPunches && !isAccountEstablished()) ? (
         <div className="bg-emerald-50/80 border-b border-emerald-200/80 px-4 py-2.5 text-emerald-950 shadow-xs animate-fadeIn">
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-xs">
@@ -1309,7 +1767,7 @@ export default function App() {
               todayRecord={todayRecord}
               projects={projects}
               selectedProjectId={selectedProjectId}
-              onSelectProject={(projId) => setSelectedProjectId(projId)}
+              onSelectProject={handleSelectProject}
               onOpenProjectsModal={() => setIsProjectsModalOpen(true)}
               onPunch={handlePunch}
               onUpdateTodaySessions={handleUpdateTodaySessions}
@@ -1323,8 +1781,27 @@ export default function App() {
               themeColor={settings.themeColor || '#0284C7'}
               secondaryColor={settings.chartColor || '#0F172A'}
               liveElapsedSeconds={liveElapsedSeconds}
+              activeQuarter={activeQuarter}
+              currentQuarter={currentQuarter}
+              onReturnToCurrentQuarter={() => handleQuarterChange(currentQuarter)}
               onOpenPastDateModal={() => {
-                setSelectedPastDate(formatDateToYYYYMMDD(new Date()));
+                let defaultDate = formatDateToYYYYMMDD(new Date());
+                if (activeQuarter !== currentQuarter) {
+                  if (records.length > 0) {
+                    const sorted = [...records].sort((a, b) => b.date.localeCompare(a.date));
+                    defaultDate = sorted[0].date;
+                  } else {
+                    const match = activeQuarter.match(/^Q([1-4])\s*(\d{4})/i);
+                    if (match) {
+                      const q = parseInt(match[1], 10);
+                      const y = parseInt(match[2], 10);
+                      const endMonth = q * 3;
+                      const lastDay = new Date(y, endMonth, 0).getDate();
+                      defaultDate = `${y}-${String(endMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+                    }
+                  }
+                }
+                setSelectedPastDate(defaultDate);
                 setIsPastDateModalOpen(true);
               }}
             />
@@ -1343,6 +1820,7 @@ export default function App() {
                 settings={settings}
                 liveExtraSeconds={liveElapsedSeconds}
                 records={records}
+                previousQuarterRecords={previousQuarterRecords}
                 projects={projects}
                 activeQuarter={activeQuarter}
                 themeColor={settings.themeColor || '#0284C7'}
@@ -1375,6 +1853,7 @@ export default function App() {
               recentEntries={metrics.recent}
               onOpenTimesheetModal={() => setIsTimesheetModalOpen(true)}
               onExportCSV={handleExportCSV}
+              onImportCSV={handleImportCSVFile}
               onEditDay={handleOpenDateEditor}
               activeQuarter={activeQuarter}
               projects={projects}
@@ -1421,9 +1900,11 @@ export default function App() {
         isOpen={isProjectsModalOpen}
         onClose={() => setIsProjectsModalOpen(false)}
         projects={projects}
-        records={records}
+        records={allQuartersRecords}
+        availableQuarters={availableQuarters}
         onSaveProjects={handleSaveProjects}
-        onSaveRecords={handleSaveTimesheetRecords}
+        onSavePunchEdit={handleSaveProjectPunchEdit}
+        onDeletePunch={handleProjectDeletePunch}
         themeColor={settings.themeColor || '#0284C7'}
         secondaryColor={settings.chartColor || '#0F172A'}
       />
@@ -1467,8 +1948,11 @@ export default function App() {
         quarterName={activeQuarter}
         records={records}
         projects={projects}
+        availableQuarters={availableQuarters}
+        onQuarterChange={handleQuarterChange}
         onSaveRecords={handleSaveTimesheetRecords}
         onSaveProjects={handleSaveProjects}
+        onImportCSVRecords={(parsedRecs, parsedProjs, fileName) => handleImportCSVData(parsedRecs, parsedProjs, fileName)}
         onExportCSV={handleExportCSV}
         onOpenDateEditor={handleOpenDateEditor}
         themeColor={settings.themeColor || '#0284C7'}
@@ -1479,10 +1963,11 @@ export default function App() {
         onClose={() => setIsQuarterWeeksModalOpen(false)}
         quarterName={activeQuarter}
         weeks={quarterWeeks}
-        weeklyGoalHours={settings.weeklyGoalHours || 0}
+        weeklyGoalHours={getQuarterGoal(activeQuarter, settings).weeklyGoalHours || settings.weeklyGoalHours || 0}
         themeColor={settings.themeColor || '#0284C7'}
         secondaryColor={settings.chartColor || '#0F172A'}
         records={records}
+        previousQuarterRecords={previousQuarterRecords}
         projects={projects}
         liveExtraSeconds={liveElapsedSeconds}
       />
@@ -1503,6 +1988,7 @@ export default function App() {
       <SettingsModal
         isOpen={isSettingsModalOpen}
         onClose={() => setIsSettingsModalOpen(false)}
+        activeQuarter={activeQuarter}
         settings={settings}
         onSaveSettings={handleSaveSettings}
         onDataReload={reloadQuarterData}
@@ -1525,8 +2011,9 @@ export default function App() {
           todayRecord={todayRecord}
           projects={projects}
           selectedProjectId={selectedProjectId}
-          onSelectProject={(projId) => setSelectedProjectId(projId)}
+          onSelectProject={handleSelectProject}
           onPunch={handlePunch}
+          onUpdateTodaySessions={handleUpdateTodaySessions}
           isPunchedIn={punchState.isPunchedIn}
           activeInTime={punchState.activeInTime}
           activeInDate={punchState.activeInDate}

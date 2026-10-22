@@ -1,6 +1,8 @@
+import { ChangeEvent } from 'react';
 import { 
   Calendar, 
   Download, 
+  Upload,
   ChevronRight, 
   Edit3, 
   ArrowUpRight,
@@ -16,6 +18,7 @@ interface RecentTableProps {
   recentEntries: RecentEntry[];
   onOpenTimesheetModal: () => void;
   onExportCSV: () => void;
+  onImportCSV?: (e: ChangeEvent<HTMLInputElement>) => void;
   onEditDay: (dateStr: string) => void;
   activeQuarter: string;
   projects?: Project[];
@@ -27,6 +30,7 @@ export function RecentTable({
   recentEntries,
   onOpenTimesheetModal,
   onExportCSV,
+  onImportCSV,
   onEditDay,
   activeQuarter,
   projects = [],
@@ -48,6 +52,23 @@ export function RecentTable({
         </div>
 
         <div className="flex items-center gap-2">
+          {onImportCSV && (
+            <label
+              id="btn-recent-import-csv"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-2xs transition-colors cursor-pointer bg-slate-100 hover:bg-slate-200/80 text-slate-700 border border-slate-200"
+              title="Import CSV from this or previous quarters to view in quarter selector and records"
+            >
+              <Upload className="w-3.5 h-3.5 text-blue-600" />
+              <span>Import CSV</span>
+              <input
+                type="file"
+                accept=".csv"
+                onChange={onImportCSV}
+                className="hidden"
+              />
+            </label>
+          )}
+
           <button
             id="btn-export-csv"
             onClick={onExportCSV}

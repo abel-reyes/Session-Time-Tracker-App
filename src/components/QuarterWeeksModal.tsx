@@ -30,6 +30,7 @@ interface QuarterWeeksModalProps {
   themeColor?: string;
   secondaryColor?: string;
   records?: DayRecord[];
+  previousQuarterRecords?: DayRecord[];
   projects?: Project[];
   liveExtraSeconds?: number;
 }
@@ -48,6 +49,7 @@ export function QuarterWeeksModal({
   themeColor = '#0284C7',
   secondaryColor = '#0F172A',
   records = [],
+  previousQuarterRecords = [],
   projects = [],
   liveExtraSeconds = 0,
 }: QuarterWeeksModalProps) {
@@ -79,14 +81,19 @@ export function QuarterWeeksModal({
     }
   }, [isOpen]);
 
-  // Fast map of date -> DayRecord
+  // Fast map of date -> DayRecord (combining current quarter and previous quarter for boundary weeks)
   const recordMap = useMemo(() => {
     const map = new Map<string, DayRecord>();
+    if (previousQuarterRecords && Array.isArray(previousQuarterRecords)) {
+      previousQuarterRecords.forEach((r) => {
+        if (r && r.date) map.set(r.date, r);
+      });
+    }
     records.forEach((r) => {
-      map.set(r.date, r);
+      if (r && r.date) map.set(r.date, r);
     });
     return map;
-  }, [records]);
+  }, [records, previousQuarterRecords]);
 
   // Compute summary stats
   const { 

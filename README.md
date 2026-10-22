@@ -50,6 +50,7 @@ A modern, high-precision session timestamp tracker and productivity analytics pl
 
 ### Multi-Project Organization & Categorization
 - **Color-Coded Projects**: Categorize time entries across client and internal projects with custom color tags.
+- **Persistent Project Assignment Memory**: Automatically preserves the last selected or active project in the project assignment dropdown across pauses, starts, and rapid punch cycles, ensuring users do not need to repeatedly re-select projects when resuming work.
 - **Billable Rates & Invoicing**: Assign optional hourly billable rates per project to compute billable sums and client totals in real time.
 - **Collapsible Billing Calculator by Date**: Filter project sessions across customizable date ranges. Generates formatted client invoice summaries, billable hour totals, and itemized daily breakdowns with 1-click clipboard copying and CSV export.
 - **Project Filtering & Objectives**: Filter timesheet logs and metrics by specific projects to evaluate focused effort and monitor accomplished objectives.
@@ -58,7 +59,8 @@ A modern, high-precision session timestamp tracker and productivity analytics pl
 
 ### Analytics & Visual Reporting
 - **Metric Cards**: Instant calculations for Today, This Week, This Month, and Year-to-Date hours.
-- **Weekly & Quarterly Rollups**: View average weekly hours broken down by month and fiscal quarter.
+- **Weekly & Quarterly Rollups**: View average weekly hours broken down by month and fiscal quarter, with seamless cross-quarter continuity referencing the prior quarter's final week when a new quarter begins.
+- **Seamless Cross-Quarter Goal Continuity**: Target session hours (weekly and daily goals) automatically carry forward when transitioning into a new fiscal quarter without needing to be re-entered. Users can also inspect which quarter goals were carried from or re-apply prior quarter goals with 1 click from the Goals settings panel.
 - **Interactive Visual Charts**: Powered by Recharts—visualize distribution across projects, daily trends, and hourly density.
 - **Celebration Triggers**: Integrated confetti celebration animations upon hitting milestone targets.
 
